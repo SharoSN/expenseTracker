@@ -8,7 +8,7 @@ import {
   Image,
   Alert,
   TextInput,
-  ActivityIndicator
+  ActivityIndicator,
 } from "react-native";
 import icons from "@/constants/icons";
 import { loginWithEmail } from "@/lib/appwrite";
@@ -58,7 +58,7 @@ const SignIn = () => {
         contentContainerStyle={{
           flexGrow: 1,
           justifyContent: "center",
-          alignItems: "center"
+          alignItems: "center",
         }}
         className="w-full max-w-md"
       >

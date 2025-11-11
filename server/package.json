@@ -4,7 +4,10 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "dev": "node --loader ts-node/esm server.ts"
   },
   "keywords": [],
   "author": "",
@@ -12,8 +15,18 @@
   "type": "module",
   "dependencies": {
     "dotenv": "^17.2.1",
+    "expo": "~52.0.47",
     "express": "^5.1.0",
     "node-appwrite": "^19.0.0",
-    "punycode": "^2.3.1"
+    "punycode": "^2.3.1",
+    "react": "18.3.1",
+    "react-native": "0.76.9",
+    "react-native-confetti-cannon": "^1.5.2"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "@types/ws": "^8.18.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
   }
 }

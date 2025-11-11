@@ -40,12 +40,13 @@
         }
       ],
       [
-        "expo-av",
+        "expo-audio",
         {
           "microphonePermission": "Allow $(PRODUCT_NAME) to access your microphone."
         }
       ],
-      ["@wdragon/react-native-voice"]
+      ["@wdragon/react-native-voice"],
+      "expo-dev-client"
     ],
     "experiments": {
       "typedRoutes": true

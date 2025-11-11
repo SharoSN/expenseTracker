@@ -208,3 +208,11 @@ export const signUpSchema = z.object({
   postalCode: z.string().min(5, "Postal code must be at least 5 characters."),
   dateOfBirth: z.string().nonempty("Date of birth is required."),
 });
+
+export function generateUUID(): string {
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}

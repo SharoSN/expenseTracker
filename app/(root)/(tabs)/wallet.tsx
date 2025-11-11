@@ -4,7 +4,7 @@ import {
   SafeAreaView,
   TouchableOpacity,
   Image,
-  FlatList
+  FlatList,
 } from "react-native";
 import React, { useEffect, useState } from "react";
 import Animated, { FadeInDown } from "react-native-reanimated";
@@ -14,16 +14,28 @@ import { useRouter } from "expo-router";
 import { useFetchData } from "@/hooks/useFetchData";
 import { useGlobalContext } from "@/lib/global-provider";
 import LottieView from "lottie-react-native";
+import { RefreshControl } from "react-native";
 
 const Wallets = () => {
   const router = useRouter();
   const { user } = useGlobalContext();
 
-  // initial fetch
-  const { wallets: initialWallets, error, loading } = useFetchData(user?.$id);
-
-  // local state for live updates
   const [wallets, setWallets] = useState<any[]>([]);
+
+  const [refreshing, setRefreshing] = useState(false);
+
+  const {
+    wallets: initialWallets,
+    error,
+    loading,
+    refetch,
+  } = useFetchData(user?.$id);
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await refetch();
+    setRefreshing(false);
+  };
 
   useEffect(() => {
     if (initialWallets) {
@@ -35,7 +47,7 @@ const Wallets = () => {
   useEffect(() => {
     if (!user?.$id) return;
 
-    const socket = new WebSocket("ws://172.20.10.5:3000");
+    const socket = new WebSocket("ws://localhost:3000");
 
     socket.onopen = () => {
       console.log("✅ Wallets WS connected");
@@ -57,7 +69,7 @@ const Wallets = () => {
 
       if (data.type === "wallet_updated") {
         setWallets((prev) =>
-          prev.map((w) => (w.$id === data.wallet.$id ? data.wallet : w))
+          prev.map((w) => (w.$id === data.wallet.$id ? data.wallet : w)),
         );
       }
     };
@@ -76,8 +88,8 @@ const Wallets = () => {
       params: {
         id: item?.$id,
         name: item?.name,
-        image: item?.image
-      }
+        image: item?.image,
+      },
     });
   };
 
@@ -108,7 +120,7 @@ const Wallets = () => {
               marginTop: 20,
               paddingHorizontal: 24,
               paddingVertical: 12,
-              borderRadius: 12
+              borderRadius: 12,
             }}
           >
             <Text style={{ color: "white", fontSize: 16 }}>Add Wallet</Text>
@@ -140,6 +152,9 @@ const Wallets = () => {
               keyExtractor={(item) => item.$id}
               showsVerticalScrollIndicator={false}
               contentContainerStyle={{ paddingBottom: 20 }}
+              refreshControl={
+                <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+              }
               renderItem={({ item, index }) => (
                 <TouchableOpacity
                   onPress={() => openWallet(item)}

@@ -10,7 +10,11 @@ const AnimatedCounter = ({ amount }: { amount: number }) => {
         value={amount}
         formatter={(val: any) => formatMoney(parseFloat(val.toFixed(2)))}
         // Use the imported formatCurrency function for formatting
-        style={{ fontSize: 22, fontWeight: "600" }}
+        style={{
+          fontSize: 22,
+          fontWeight: "600",
+          color: amount < 0 ? "red" : "black",
+        }}
       />
     </View>
   );

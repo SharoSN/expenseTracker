@@ -6,7 +6,7 @@ import {
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
-  Text
+  Text,
 } from "react-native";
 import HeaderBox from "@/components/HeaderBox";
 import { useGlobalContext } from "@/lib/global-provider";
