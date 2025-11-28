@@ -11,13 +11,30 @@ import Animated, { FadeInDown } from "react-native-reanimated";
 import { useRouter } from "expo-router";
 import { config, storage } from "@/lib/appwrite";
 
-const Transactionslist = ({
+export const TransactionsList = ({
   loading,
-  data,
+  data = [],
   title = "Recent Transactions",
   emptyListMessage = "No transactions found."
 }: TransactionListType) => {
   const router = useRouter();
+
+
+  // Add debugging
+
+
+  // Validate data before sorting
+  const sortedData = React.useMemo(() => {
+    if (!Array.isArray(data)) {
+      console.warn('TransactionsList: data is not an array', data);
+      return [];
+    }
+
+    return [...data].sort(
+      (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+    );
+  }, [data]);
+
 
   const handleClick = async (item: TransactionType) => {
     console.log("Raw transaction item:", item);
@@ -47,9 +64,7 @@ const Transactionslist = ({
   };
 
   // Sort transactions by date (newest first)
-  const sortedData = [...data].sort(
-    (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
-  );
+
 
   return (
     <View className="p-4">
@@ -96,8 +111,8 @@ const TransactionItem = ({
     item.type === "income"
       ? incomeCategory
       : categoryKey && expenseCategories[categoryKey]
-      ? expenseCategories[categoryKey]
-      : {
+        ? expenseCategories[categoryKey]
+        : {
           label: "Uncategorized",
           icon: DefaultIcon,
           bgColor: "#E2E8F0"
@@ -116,7 +131,7 @@ const TransactionItem = ({
           textAlign: "center",
           lineHeight: props.size
         }}
-      ></Text>
+      >?</Text>
     );
   }
 
@@ -153,9 +168,8 @@ const TransactionItem = ({
         </View>
         <View className="flex flex-col items-center">
           <Text
-            className={`font-semibold ${
-              item.type === "income" ? "text-green-600" : "text-red-600"
-            }`}
+            className={`font-semibold ${item.type === "income" ? "text-green-600" : "text-red-600"
+              }`}
           >
             {item.type === "income" ? "+ $" : "- $"}
             {item.amount}
@@ -172,4 +186,4 @@ const TransactionItem = ({
   );
 };
 
-export default Transactionslist;
+

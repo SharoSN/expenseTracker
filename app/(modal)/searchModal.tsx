@@ -13,7 +13,7 @@ import { Input } from "@/~/components/ui/input";
 
 import { useGlobalContext } from "@/lib/global-provider";
 import { getUserTransactions } from "@/lib/appwrite";
-import Transactionslist from "@/components/TransactisonsList";
+import { TransactionsList } from "@/components/TransactionsList";
 import { BlurView } from "expo-blur";
 
 const SearchModal = () => {
@@ -92,7 +92,7 @@ const SearchModal = () => {
                   className="bg-gray-50 border border-gray-300 rounded-lg px-4 py-3"
                 />
 
-                <Transactionslist
+                <TransactionsList
                   title="Matching Transactions"
                   data={filteredTransactions}
                   loading={loadingTransactions}

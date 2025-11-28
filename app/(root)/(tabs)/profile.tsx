@@ -63,10 +63,10 @@ const Profile = () => {
   const imageUrl = user?.avatarUrl
     ? user.avatarUrl
     : avatar.getInitials(
-        `${user?.firstName || ""} ${user?.lastName || ""}`,
-        200,
-        200
-      ).href;
+      `${user?.firstName || ""} ${user?.lastName || ""}`,
+      200,
+      200
+    ).href;
 
   const handleLogout = async () => {
     const success = await logoutUser();

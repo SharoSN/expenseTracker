@@ -3,18 +3,10 @@ import React from "react";
 import { SafeAreaView } from "react-native";
 import LinearGradient from "react-native-linear-gradient";
 import icons from "@/constants/icons";
-import { useFetchData } from "@/hooks/useFetchData";
 import AnimatedCounter from "./AnimatedCounter";
-import { useGlobalContext } from "@/lib/global-provider";
 import { useMemo } from "react";
 
-const HomeCard = () => {
-  const { user } = useGlobalContext();
-
-  const { wallets, error, loading } = useFetchData(user?.$id);
-
-  // ...
-
+const HomeCard = ({ wallets }) => {
   const { totalBalance, totalIncome, totalExpense } = useMemo(() => {
     if (!wallets || wallets.length === 0) {
       return { totalBalance: 0, totalIncome: 0, totalExpense: 0 };

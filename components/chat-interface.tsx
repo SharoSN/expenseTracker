@@ -1,43 +1,46 @@
-import React, { forwardRef } from "react";
-import { View, ScrollView, Text } from "react-native";
+import { View, Text, ScrollView } from 'react-native';
 
-type Message = {
-  id: string;
-  role: "user" | "assistant";
-  content: string;
-};
-
-type ChatInterfaceProps = {
-  messages: Message[];
-  scrollViewRef: React.RefObject<ScrollView>;
-};
-
-export const ChatInterface = forwardRef<ScrollView, ChatInterfaceProps>(
-  ({ messages, scrollViewRef }, ref) => {
-    return (
-      <View className="flex-1 bg-white">
-        <ScrollView ref={ref} className="flex-1 space-y-4 p-4">
-          {!messages.length && (
-            <View className="items-center justify-center flex-1">
-              <Text className="text-gray-500">Start chatting...</Text>
-            </View>
-          )}
-
-          {messages.map((m) => (
-            <View
-              key={m.id}
-              className={`flex-row items-center mt-2 px-4 py-2 ${
-                m.role === "user"
-                  ? "ml-auto max-w-[80%] bg-gray-200 rounded-2xl"
-                  : "max-w-[90%] bg-white rounded-2xl"
+const ChatInterface = ({ messages }) => {
+  return (
+    <View className="flex-1 p-4">
+      <ScrollView
+        className="flex-1 space-y-4 p-4"
+        showsVerticalScrollIndicator={false}
+      >
+        {messages.map((msg) => (
+          <View
+            key={msg.id}
+            className={`flex-row my-2 items-center ${msg.role === "user" ? "justify-end" : "justify-start"
               }`}
+          >
+            {/* Bot Avatar */}
+            {msg.role === "assistant" && (
+              <View className="w-8 h-8 bg-gray-200 rounded-full items-center justify-center mr-2">
+                <Text>🤖</Text>
+              </View>
+            )}
+
+            {/* Message Bubble */}
+            <View
+              className={`p-3 rounded-2xl max-w-[75%] ${msg.role === "user"
+                ? "bg-gray-900"
+                : "bg-white"
+                }`}
             >
-              {m.role !== "user" && <Text className="mr-2">🤖</Text>}
-              <Text className="text-base text-black">{m.content}</Text>
+              <Text
+                className={
+                  msg.role === "user" ? "text-white" : "text-black"
+                }
+              >
+                {msg.content}
+              </Text>
             </View>
-          ))}
-        </ScrollView>
-      </View>
-    );
-  },
-);
+          </View>
+        ))}
+      </ScrollView>
+    </View>
+  );
+};
+
+export default ChatInterface;
+

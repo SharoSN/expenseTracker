@@ -52,7 +52,7 @@ const DropdownComponent = ({
         onBlur={() => setIsFocus(false)}
         onChange={(item) => {
           console.log("DropdownComponent: selected type =", item.value);
-          setTransaction({ ...transaction, type: item.value, category: "" }); // reset category on type change
+          setTransaction({ ...transaction, type: item.value }); // category reset is handled by useEffect in parent
           setIsFocus(false);
         }}
       />

@@ -42,10 +42,13 @@
       [
         "expo-audio",
         {
-          "microphonePermission": "Allow $(PRODUCT_NAME) to access your microphone."
+          "microphonePermission": "Allow $(PRODUCT_NAME) to access your microphone.",
+          "disableAudioDefaults": true
         }
       ],
-      ["@wdragon/react-native-voice"],
+      [
+        "@wdragon/react-native-voice"
+      ],
       "expo-dev-client"
     ],
     "experiments": {

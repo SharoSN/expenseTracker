@@ -1,28 +1,53 @@
 import React, { useEffect, useRef, useState } from "react";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { ScrollView, View } from "react-native";
-import { ChatInput } from "@/~/components/ui/chat-input";
-import { ChatInterface } from "@/components/chat-interface";
 import { useAppSocket } from "@/hooks/useAppSocket";
 import { useGlobalContext } from "@/lib/global-provider";
-import AICharacter from "@/components/AICharacter";
+import ChatInterface from "@/components/chat-interface";
+import { ChatInput } from "@/components/AICharacter";
 
 const Velora = () => {
   const { user } = useGlobalContext();
-
   const [input, setInput] = useState("");
-
+  const [loading, setLoading] = useState(false);
   const [messages, setMessages] = useState([
     { id: "1", role: "assistant", content: "Hello! How can I help you?" },
   ]);
   const scrollViewRef = useRef<ScrollView>(null);
+  const chatInputRef = useRef<any>(null);
 
-  const { sendMessage } = useAppSocket(user?.$id);
+  // Single useAppSocket for both voice and text
+  const { sendMessage, lastMessage, clearLastMessage, isConnected } = useAppSocket(user?.$id);
+
+  // Listen for responses from backend (both voice and text)
+  useEffect(() => {
+    if (lastMessage) {
+      console.log("📨 Received message from AI:", lastMessage);
+
+      const aiMsg = {
+        id: Date.now().toString(),
+        role: "assistant",
+        content: lastMessage,
+      };
+
+      setMessages((prev) => [...prev, aiMsg]);
+      setLoading(false);
+
+      // Scroll to bottom
+      setTimeout(() => {
+        scrollViewRef.current?.scrollToEnd({ animated: true });
+      }, 100);
+
+      clearLastMessage();
+    }
+  }, [lastMessage, clearLastMessage]);
 
   const handleSubmit = () => {
-    if (!input.trim()) return;
+    if (!input.trim() || loading) return;
 
-    // show user message immediately
+    setLoading(true);
+
+    // Show user message immediately
     const userMsg = {
       id: Date.now().toString(),
       role: "user",
@@ -30,7 +55,7 @@ const Velora = () => {
     };
     setMessages((prev) => [...prev, userMsg]);
 
-    // send to backend
+    // Send to backend
     sendMessage({
       type: "text",
       userId: user?.$id,
@@ -38,28 +63,36 @@ const Velora = () => {
     });
 
     setInput("");
+
+    // Scroll to bottom
+    setTimeout(() => {
+      scrollViewRef.current?.scrollToEnd({ animated: true });
+    }, 100);
   };
 
   return (
-    <SafeAreaView className="flex-1 bg-white">
-      <ScrollView
-        className="container relative mx-auto flex-1 bg-white dark:bg-black"
-        ref={scrollViewRef}
-      >
+    <SafeAreaView className="flex-1 bg-white dark:bg-black justify-between">
+      {/* Messages Display */}
+      <View className="flex-1 bg-white dark:bg-black">
         <ChatInterface messages={messages} scrollViewRef={scrollViewRef} />
-      </ScrollView>
+      </View>
 
-      <AICharacter />
-
+      {/* Chat Input with Integrated Mic & Voice Support */}
       <View className="mb-24">
+
         <ChatInput
+          ref={chatInputRef}
           input={input}
           onChangeText={setInput}
           onSubmit={handleSubmit}
           scrollViewRef={scrollViewRef}
           focusOnMount={false}
+          loading={loading}
+          sendMessage={sendMessage}  // ← PASS THIS
         />
+
       </View>
+
     </SafeAreaView>
   );
 };

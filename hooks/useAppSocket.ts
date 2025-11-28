@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useWalletStore } from "@/lib/walletStore";
 
 const WS_PORT = 3000;
 
@@ -7,22 +9,33 @@ export interface Wallet {
   [key: string]: any;
 }
 
+interface Transaction {
+  $id: string;
+  walletId: string;
+  type: "income" | "expense";
+  amount: number;
+  [key: string]: any;
+}
+
 interface WSMessage {
   type: string;
   wallet?: Wallet;
   walletId?: string;
+  transaction?: Transaction;
   text?: string;
 }
 
 export function useAppSocket(userId: string | null) {
-  const [wallets, setWallets] = useState<Wallet[]>([]);
   const [lastMessage, setLastMessage] = useState<string | null>(null);
   const [animationTrigger, setAnimationTrigger] = useState<string | null>(null);
   const [isConnected, setIsConnected] = useState(false);
-
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeout = useRef<NodeJS.Timeout | null>(null);
   const messageQueue = useRef<any[]>([]);
+
+  // Get React Query client & Zustand store
+  const queryClient = useQueryClient();
+  const { setWallets, setTransactions, wallets, transactions } = useWalletStore();
 
   // --- Send message with queue support ---
   const sendMessage = useCallback(
@@ -31,9 +44,7 @@ export function useAppSocket(userId: string | null) {
         console.warn("sendMessage skipped: no userId yet", data);
         return;
       }
-
       const payload = { ...data, userId };
-
       if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
         wsRef.current.send(JSON.stringify(payload));
       } else {
@@ -47,10 +58,67 @@ export function useAppSocket(userId: string | null) {
     (name: string) => setAnimationTrigger(name),
     [],
   );
+
   const clearAnimationTrigger = useCallback(
     () => setAnimationTrigger(null),
     [],
   );
+
+  const clearLastMessage = useCallback(() => {
+    setLastMessage(null);
+  }, []);
+
+  // --- Sync WebSocket updates to React Query & Zustand ---
+  const handleWalletCreated = useCallback((wallet: Wallet) => {
+    console.log("💰 Wallet created via WebSocket:", wallet);
+
+    // Update Zustand store
+    setWallets([...wallets, wallet]);
+
+    // Update React Query cache
+    queryClient.setQueryData(["wallets", userId], (old: Wallet[] | undefined) => {
+      return old ? [...old, wallet] : [wallet];
+    });
+
+    // Invalidate to sync with backend
+    queryClient.invalidateQueries({ queryKey: ["wallets", userId] });
+
+    setAnimationTrigger("wallet_created");
+  }, [wallets, userId, setWallets, queryClient]);
+
+  const handleWalletDeleted = useCallback((walletId: string) => {
+    console.log("🗑️ Wallet deleted via WebSocket:", walletId);
+
+    // Update Zustand store
+    setWallets(wallets.filter((w) => w.$id !== walletId));
+
+    // Update React Query cache
+    queryClient.setQueryData(["wallets", userId], (old: Wallet[] | undefined) => {
+      return old ? old.filter((w) => w.$id !== walletId) : [];
+    });
+
+    // Invalidate to sync with backend
+    queryClient.invalidateQueries({ queryKey: ["wallets", userId] });
+
+    setAnimationTrigger("wallet_deleted");
+  }, [wallets, userId, setWallets, queryClient]);
+
+  const handleTransactionCreated = useCallback((transaction: Transaction) => {
+    console.log("📊 Transaction created via WebSocket:", transaction);
+
+    // Update Zustand store
+    setTransactions([...(transactions || []), transaction]);
+
+    // Update React Query cache
+    queryClient.setQueryData(["transactions", userId], (old: Transaction[] | undefined) => {
+      return old ? [...old, transaction] : [transaction];
+    });
+
+    // Invalidate wallet totals since amount changed
+    queryClient.invalidateQueries({ queryKey: ["wallets", userId] });
+
+    setAnimationTrigger("transaction_created");
+  }, [transactions, userId, setTransactions, queryClient]);
 
   const connectWebSocket = useCallback(() => {
     if (!userId) return;
@@ -75,22 +143,27 @@ export function useAppSocket(userId: string | null) {
         const data: WSMessage = JSON.parse(e.data);
         console.log("Received WS:", data);
 
-        if (data.wallet) {
-          if (data.type === "wallet_created")
-            setWallets((w) => [...w, data.wallet!]);
-          setAnimationTrigger("wallet_created");
-          if (data.type === "wallet_updated")
-            setWallets((w) =>
-              w.map((x) =>
-                x.$id === data.wallet!.$id ? { ...x, ...data.wallet! } : x,
-              ),
-            );
+        // Handle wallet creation
+        if (data.type === "wallet_created" && data.wallet) {
+          handleWalletCreated(data.wallet);
         }
 
-        if (data.walletId && data.type === "wallet_deleted")
-          setWallets((w) => w.filter((x) => x.$id !== data.walletId));
+        // Handle wallet deletion
+        if (data.type === "wallet_deleted" && data.walletId) {
+          handleWalletDeleted(data.walletId);
+        }
 
-        if (data.text) setLastMessage(data.text);
+        // Handle transaction creation
+        if (data.type === "transaction_created" && data.transaction) {
+          handleTransactionCreated(data.transaction);
+        }
+
+        // Handle response text
+
+        if (data.type === "response" && typeof data.text === "string") {
+          setLastMessage(data.text);
+        }
+
       } catch (err) {
         console.error("Failed to parse WS message:", err);
       }
@@ -106,7 +179,7 @@ export function useAppSocket(userId: string | null) {
       console.error("WebSocket error:", err);
       ws.close();
     };
-  }, [userId, sendMessage]);
+  }, [userId, sendMessage, handleWalletCreated, handleWalletDeleted, handleTransactionCreated]);
 
   useEffect(() => {
     connectWebSocket();
@@ -117,12 +190,12 @@ export function useAppSocket(userId: string | null) {
   }, [connectWebSocket]);
 
   return {
-    wallets,
     lastMessage,
     sendMessage,
     animationTrigger,
     triggerAnimation,
     clearAnimationTrigger,
+    clearLastMessage,
     isConnected,
   };
 }

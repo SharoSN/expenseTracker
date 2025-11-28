@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import {
   View,
   SafeAreaView,
@@ -6,101 +6,153 @@ import {
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
-  Text,
+  RefreshControl,
 } from "react-native";
-import HeaderBox from "@/components/HeaderBox";
-import { useGlobalContext } from "@/lib/global-provider";
-import icons from "@/constants/icons";
-import HomeCard from "@/components/HomeCard";
-import Transactionslist from "@/components/TransactisonsList";
 import { useRouter } from "expo-router";
-import { getUserTransactions } from "@/lib/appwrite";
+import { useQueryClient } from "@tanstack/react-query";
+import { BlurView } from "expo-blur";
+
+import HeaderBox from "@/components/HeaderBox";
+import HomeCard from "@/components/HomeCard";
+import { TransactionsList } from "@/components/TransactionsList";
+import { useGlobalContext } from "@/lib/global-provider";
+import { useWalletStore } from "@/lib/walletStore";
+
+import icons from "@/constants/icons";
+import { useTransactionData } from "@/hooks/userTransactionData";
+import { useWalletData } from "@/hooks/useWalletData";
 
 const Home = () => {
-  const { user } = useGlobalContext();
   const router = useRouter();
+  const queryClient = useQueryClient();
+  const { user } = useGlobalContext();
 
-  const [transactions, setTransactions] = useState([]);
-  const [loadingTransactions, setLoadingTransactions] = useState(true);
-  const [checkingAuth, setCheckingAuth] = useState(true);
+  // Zustand store (single source of truth)
+  const {
+    wallets: storeWallets,
+    transactions: storeTransactions,
+    setWallets,
+    setTransactions,
+    initializeWebSocket,
+    closeWebSocket,
+  } = useWalletStore();
 
+  const [refreshing, setRefreshing] = useState(false);
+
+  // ---------------------------
+  // AUTH + WEBSOCKET SETUP
+  // ---------------------------
   useEffect(() => {
-    // If no user, redirect to sign-in page
-    if (!user) {
-      router.replace("/sign-in");
-      return;
-    }
-    setCheckingAuth(false);
-  }, [user, router]);
-
-  useEffect(() => {
-    const fetchTransactions = async () => {
-      if (!user?.$id) return;
-
-      setLoadingTransactions(true);
-      try {
-        const txs = await getUserTransactions(user.$id);
-        setTransactions(txs);
-      } catch (error) {
-        console.error("Failed to fetch transactions", error);
-      } finally {
-        setLoadingTransactions(false);
-      }
-    };
-
     if (user?.$id) {
-      fetchTransactions();
+      initializeWebSocket(user.$id, queryClient);
+    } else {
+      router.replace("/sign-in");
     }
+
+    return () => closeWebSocket();
   }, [user?.$id]);
 
-  if (checkingAuth) {
+  // ---------------------------
+  // FETCH: Wallets (React Query)
+  // ---------------------------
+  const {
+    wallets: queryWallets,
+    isLoading: isLoadingWallets,
+    isError: isErrorWallets,
+    totalBalance,
+  } = useWalletData();
+
+  // Sync React Query → Zustand
+  useEffect(() => {
+    if (queryWallets) setWallets(queryWallets);
+  }, [queryWallets]);
+
+  // ---------------------------
+  // FETCH: Transactions (React Query)
+  // ---------------------------
+  const {
+    data: queryTransactions,
+    isLoading: isLoadingTransactions,
+    isError: isErrorTransactions,
+  } = useTransactionData();
+
+  // Sync React Query → Zustand
+  useEffect(() => {
+    if (queryTransactions) setTransactions(queryTransactions);
+  }, [queryTransactions]);
+
+  // ---------------------------
+  // PULL TO REFRESH
+  // ---------------------------
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+
+    await Promise.all([
+      queryClient.invalidateQueries(["wallets", user?.$id]),
+      queryClient.invalidateQueries(["transactions", user?.$id]),
+    ]);
+
+    setRefreshing(false);
+  }, [queryClient, user?.$id]);
+
+  // ---------------------------
+  // LOADING WHILE AUTH IS LOADING
+  // ---------------------------
+  if (!user) {
     return (
-      <SafeAreaView className="flex-1 justify-center items-center">
-        <ActivityIndicator size="large" color="#0000ff" />
+      <SafeAreaView className="flex-1 justify-center items-center bg-white">
+        <ActivityIndicator size="large" />
       </SafeAreaView>
     );
   }
 
+  const isLoading = isLoadingWallets || isLoadingTransactions;
+
   return (
     <SafeAreaView className="flex-1 bg-white">
-      <View className="p-6">
-        <View className="flex flex-row items-end justify-between">
-          <HeaderBox
-            type="greeting"
-            title="Welcome"
-            user={
-              `${user?.firstName ?? ""} ${user?.lastName ?? ""}`.trim() ||
-              "Guest"
-            }
-            subtext="Manage your account and transactions efficiently."
-          />
-
-          <TouchableOpacity onPress={() => router.push("/searchModal")}>
-            <Image source={icons.search} className="size-8" />
-          </TouchableOpacity>
+      {/* Glassmorphism Header */}
+      <BlurView intensity={90} tint="light" className="absolute top-0 left-0 right-0 z-40">
+        <View className="p-6 mt-12">
+          <View className="flex flex-row items-end justify-between">
+            <HeaderBox
+              type="greeting"
+              title="Welcome"
+              user={`${user.firstName ?? ""} ${user.lastName ?? ""}`.trim()}
+              subtext="Manage your account and transactions efficiently."
+            />
+            <TouchableOpacity onPress={() => router.push("/searchModal")}>
+              <Image source={icons.search} className="size-8" />
+            </TouchableOpacity>
+          </View>
         </View>
-      </View>
+      </BlurView>
 
+      {/* Content with top padding to account for fixed header */}
       <ScrollView
-        contentContainerStyle={{ paddingHorizontal: 24, paddingBottom: 24 }}
         showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingHorizontal: 24, paddingBottom: 24, paddingTop: 100 }}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        }
       >
-        <HomeCard />
+        {/* Wallets UI */}
+        <HomeCard wallets={storeWallets} />
 
-        <View>
-          <Transactionslist
-            title="Recent Transactions"
-            data={transactions}
-            loading={loadingTransactions}
-          />
-        </View>
+        {/* Transactions UI */}
+        <TransactionsList
+          title="Recent Transactions"
+          data={storeTransactions}
+          loading={isLoading}
+          isError={isErrorTransactions}
+        />
       </ScrollView>
 
+      {/* Add Transaction Button */}
       <TouchableOpacity
         className="absolute bottom-24 right-2 z-50"
         onPress={() => router.push("/transactionModal")}
       >
-        <Image className="size-12" source={icons.addT} />
+        <Image source={icons.addT} className="size-12" />
       </TouchableOpacity>
     </SafeAreaView>
   );

@@ -1,3 +1,4 @@
+import React, { useEffect } from "react";
 import { View, Text } from "react-native";
 import DropdownComponent from "./DropdownComponent";
 import ExpenseCategory from "./ExpenseCategory";
@@ -12,6 +13,13 @@ const TransactionForm = ({
   transaction,
   setTransaction,
 }: TransactionFormProps) => {
+  useEffect(() => {
+    // Reset category when transaction type changes away from 'expense'
+    if (transaction.type !== "expense") {
+      setTransaction((prev) => ({ ...prev, category: "" }));
+    }
+  }, [transaction.type]);
+
   return (
     <View>
       <View className="mt-8 flex flex-col">

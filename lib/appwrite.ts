@@ -238,10 +238,7 @@ export const uploadReceipt = async (file: {
   size?: number;
 }) => {
   try {
-    // Ensure the `file` object passed to createFile has the expected structure
-    // from DocumentPicker.getDocumentAsync.
-    // If you pass `file` directly from `pickDocument`, it should work if it matches
-    // what `uploadAvatar` expects.
+
     const uploadedFile = await storage.createFile(
       config.userAvatars,
       ID.unique(),
@@ -417,7 +414,6 @@ export const getWalletById = async (walletId: string) => {
 
 export const deleteUserWalletWithImage = async (walletId: string) => {
   try {
-    // 1. Get the wallet document
     const wallet = await getWalletById(walletId);
     if (!wallet) throw new Error("Wallet not found");
 
@@ -465,19 +461,35 @@ export const deleteUserWalletWithImage = async (walletId: string) => {
 export const getUserWallets = async (
   userId: string,
 ): Promise<Models.DocumentList<Wallet>> => {
+
   try {
+    if (!userId) {
+      console.error('[getUserWallets] No userId provided');
+      return { total: 0, documents: [] };
+    }
+
+    if (!config.databaseId || !config.userWalletId) {
+      console.error('[getUserWallets] Missing database config');
+      return { total: 0, documents: [] };
+    }
+
     const result = await databases.listDocuments<Wallet>(
       config.databaseId,
       config.userWalletId,
-      [Query.equal("userId", userId)],
+      [Query.equal("userId", userId)]
     );
+
+
     return result;
-  } catch (error) {
-    console.error("Error fetching user wallets", error);
-    return {
-      total: 0,
-      documents: [],
-    };
+  } catch (error: any) {
+    console.error('[getUserWallets] ❌ Error:', {
+      message: error?.message,
+      code: error?.code,
+      type: error?.type,
+      userId
+    });
+
+    return { total: 0, documents: [] };
   }
 };
 
@@ -530,7 +542,6 @@ export const getUserTransactions = async (userId: string) => {
       config.transactionCollectionId,
       [Query.equal("uid", userId)],
     );
-
     return response.documents; // array of transactions
   } catch (error) {
     console.error("Error getting transactions", error);
@@ -538,36 +549,7 @@ export const getUserTransactions = async (userId: string) => {
   }
 };
 
-// Validate wallet balance without mutating
-const validateWalletBalance = async (
-  walletId: string,
-  amount: number,
-  type: "income" | "expense",
-) => {
-  const wallet = await databases.getDocument(
-    config.databaseId,
-    config.userWalletId,
-    walletId,
-  );
-  if (!wallet) {
-    throw new Error("Wallet not found!");
-  }
 
-  const updatedIncome = Number(wallet.totalIncome || 0);
-  const updatedExpense = Number(wallet.totalExpense || 0);
-  const currentAmount = updatedIncome - updatedExpense;
-  const amt = Number(amount);
-
-  if (isNaN(updatedIncome) || isNaN(updatedExpense) || isNaN(amt)) {
-    throw new Error("Invalid numeric values in wallet or transaction.");
-  }
-
-  if (type === "expense" && amt > currentAmount) {
-    throw new Error("Not enough balance to complete this transaction.");
-  }
-
-  return wallet;
-};
 
 export const updateWalletForNewTransaction = async (
   walletId: string,
@@ -712,7 +694,7 @@ export const createOrUpdateTransaction = async (
       success: true,
       transaction: {
         ...transaction,
-        id: transaction?.$id || id,
+        id: transaction.$id,
       },
     };
   } catch (err: any) {
@@ -823,5 +805,5 @@ export const removeWalletIcon = async (walletId: string) => {
       { image: null },
     );
     return { success: true, wallet: updatedWallet };
-  } catch (error) {}
+  } catch (error) { }
 };
