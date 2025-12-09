@@ -5,11 +5,11 @@ import {
   Databases,
   ID,
   Models,
+  Permission,
   Query,
-  Storage,
+  Role,
+  Storage
 } from "react-native-appwrite";
-
-import * as DocumentPicker from "expo-document-picker";
 
 import { TransactionType } from "@/types";
 import { Wallet } from "@/types";
@@ -26,7 +26,7 @@ export const config = {
   userWalletId: process.env.EXPO_PUBLIC_APPWRITE_WALLET_COLLECTION_ID,
   expensesCollectionId: process.env.EXPO_PUBLIC_APPWRITE_EXPENSES_COLLECTION_ID,
   transactionCollectionId:
-    process.env.EXPO_PUBLIC_APPWRITE_TRANSACTION_COLLECTION_ID,
+    process.env.EXPO_PUBLIC_APPWRITE_TRANSACTION_COLLECTION_ID
 };
 
 // Initialize Appwrite
@@ -40,12 +40,31 @@ export const account = new Account(client);
 export const databases = new Databases(client);
 export const storage = new Storage(client);
 
+// ✅ Helper: Create permissions for a specific user (read, update, delete)
+const createUserPermissions = (userId: string) => [
+  `read("user:${userId}")`,
+  `update("user:${userId}")`,
+  `delete("user:${userId}")`
+];
+
+// ✅ Helper: Always verify ownership before returning data
+const verifyOwnership = (
+  document: any,
+  userId: string,
+  userIdField: string = "userId"
+) => {
+  if (document[userIdField] !== userId) {
+    throw new Error("Unauthorized: Document does not belong to this user");
+  }
+  return document;
+};
+
 // ✅ Simplified Sign Up with Email & Password
 export const createUserAccount = async ({
   password,
   email,
   firstName,
-  lastName,
+  lastName
 }: {
   email: string;
   password: string;
@@ -53,14 +72,21 @@ export const createUserAccount = async ({
   lastName: string;
 }) => {
   try {
-    // Create the user in Appwrite authentication system
+    // Step 1: Create the account
     const newAccount = await account.create(
       ID.unique(),
       email,
       password,
-      `${firstName} ${lastName}`,
+      `${firstName} ${lastName}`
     );
 
+    // Step 2: Create session FIRST (authenticate the user)
+    const session = await account.createEmailPasswordSession(email, password);
+    if (!session) {
+      throw new Error("Login failed after signup.");
+    }
+
+    // Step 3: NOW create the user document (user is authenticated)
     await databases.createDocument(
       config.databaseId,
       config.userCollectionId,
@@ -69,16 +95,9 @@ export const createUserAccount = async ({
         userId: newAccount.$id,
         email,
         firstName,
-        lastName,
-      },
+        lastName
+      }
     );
-
-    // Now, log the user in automatically
-    const session = await account.createEmailPasswordSession(email, password);
-    if (!session) {
-      console.error("Login failed after signup.");
-      throw new Error("Login failed after signup.");
-    }
 
     return { newAccount, session };
   } catch (error) {
@@ -89,7 +108,7 @@ export const createUserAccount = async ({
 
 export const loginWithEmail = async ({
   email,
-  password,
+  password
 }: {
   email: string;
   password: string;
@@ -103,7 +122,6 @@ export const loginWithEmail = async ({
   }
 };
 
-// ✅ Logout current user
 export const logout = async () => {
   try {
     return await account.deleteSession("current");
@@ -113,7 +131,6 @@ export const logout = async () => {
   }
 };
 
-// ✅ Get current logged in user
 export const getCurrentUser = async () => {
   try {
     const user = await account.get();
@@ -122,7 +139,7 @@ export const getCurrentUser = async () => {
       const userDoc = await databases.getDocument(
         config.databaseId,
         config.userCollectionId,
-        user.$id,
+        user.$id
       );
 
       return userDoc;
@@ -130,7 +147,7 @@ export const getCurrentUser = async () => {
 
     return null;
   } catch (error) {
-    console.error("Get current suer error:", error);
+    console.error("Get current user error:", error);
     return null;
   }
 };
@@ -146,7 +163,7 @@ export const getFullUserData = async () => {
     const userDocument = await databases.getDocument(
       config.databaseId!,
       config.userCollectionId!,
-      userAccount.$id,
+      userAccount.$id
     );
 
     const fullUser = {
@@ -155,7 +172,7 @@ export const getFullUserData = async () => {
       email: userAccount.email,
       firstName: userDocument.firstName,
       lastName: userDocument.lastName,
-      avatarUrl: userDocument.avatarUrl,
+      avatarUrl: userDocument.avatarUrl
     };
 
     return fullUser;
@@ -164,13 +181,12 @@ export const getFullUserData = async () => {
   }
 };
 
-// ✅ Get user info from database
 export const getUserInfo = async (userId: string) => {
   try {
     return await databases.getDocument(
       config.databaseId,
       config.userCollectionId,
-      userId,
+      userId
     );
   } catch (error) {
     console.error("Failed to fetch user info", error);
@@ -178,34 +194,23 @@ export const getUserInfo = async (userId: string) => {
   }
 };
 
-export const saveUserExpense = async (expenseData: ExpenseData) => {
+export const saveUserExpense = async (expenseData: any) => {
   try {
+    const currentUser = await getCurrentUser();
+    if (!currentUser) throw new Error("User not authenticated");
+
     const response = await databases.createDocument(
-      config.databaseId, // your database ID
-      config.expensesCollectionId, // your expenses collection ID
-      ID.unique(), // generate unique ID for the document
-      expenseData, // the actual expense data (amount, category, etc.)
+      config.databaseId,
+      config.expensesCollectionId,
+      ID.unique(),
+      { ...expenseData, userId: currentUser.$id },
+      createUserPermissions(currentUser.$id)
     );
     return response;
   } catch (error) {
     console.error("Failed to save user expense:", error);
     return null;
   }
-};
-
-export const pickDocument = async () => {
-  const result = await DocumentPicker.getDocumentAsync({ type: "image/*" });
-
-  if (result.assets && result.assets[0]) {
-    return {
-      name: result.assets[0].name,
-      type: result.assets[0].mimeType,
-      size: result.assets[0].size,
-      uri: result.assets[0].uri,
-    };
-  }
-
-  return null;
 };
 
 export const uploadAvatar = async (file: {
@@ -216,60 +221,32 @@ export const uploadAvatar = async (file: {
 }) => {
   try {
     const response = await storage.createFile(
-      config.userAvatars, // Your BUCKET_ID
+      config.userAvatars,
       ID.unique(),
-      file,
+      file
     );
 
-    // Now use getFile to get the direct file URL
     const fileUrl = `https://fra.cloud.appwrite.io/v1/storage/buckets/${config.userAvatars}/files/${response.$id}/view?project=${config.projectId}`;
 
-    return fileUrl; // Return the direct file URL
+    return fileUrl;
   } catch (error) {
     console.error("Avatar upload failed:", error);
     return null;
   }
 };
 
-export const uploadReceipt = async (file: {
-  uri: string;
-  mimeType: string;
-  name: string;
-  size?: number;
-}) => {
-  try {
-
-    const uploadedFile = await storage.createFile(
-      config.userAvatars,
-      ID.unique(),
-      file as any, // Cast to any if TypeScript complains, or define a more precise type
-    );
-    return uploadedFile; // Return the uploaded file object from Appwrite
-  } catch (error) {
-    console.error("Error uploading receipt:", error);
-    throw error;
-  }
-};
-
-export const getReceiptUrlById = (
-  fileId: string | null | undefined,
-): string | null => {
-  if (!fileId) {
-    return null;
-  }
-
-  return `https://fra.cloud.appwrite.io/v1/storage/buckets/${config.userAvatars}/files/${fileId}/view?project=${config.projectId}`;
-};
-
 export const updateUserAvatar = async (userId: string, avatarUrl: string) => {
   try {
+    const currentUser = await getCurrentUser();
+    if (currentUser?.$id !== userId) {
+      throw new Error("Unauthorized: Cannot update another user's avatar");
+    }
+
     const updatedUser = await databases.updateDocument(
       config.databaseId,
       config.userCollectionId,
       userId,
-      {
-        avatarUrl: avatarUrl,
-      },
+      { avatarUrl: avatarUrl }
     );
     return updatedUser;
   } catch (error) {
@@ -281,25 +258,25 @@ export const updateUserAvatar = async (userId: string, avatarUrl: string) => {
 export const updateName = async ({
   userId,
   firstName,
-  lastName,
+  lastName
 }: {
-  userId: string; // your Appwrite user document ID
+  userId: string;
   firstName: string;
   lastName: string;
 }) => {
   try {
-    // 1. Update Auth name (Account)
+    const currentUser = await getCurrentUser();
+    if (currentUser?.$id !== userId) {
+      throw new Error("Unauthorized: Cannot update another user's name");
+    }
+
     await account.updateName(`${firstName} ${lastName}`);
 
-    // 2. Update user document in your database
     const updatedDoc = await databases.updateDocument(
-      config.databaseId, // replace with your database ID
-      config.userCollectionId, // replace with your users collection ID
+      config.databaseId,
+      config.userCollectionId,
       userId,
-      {
-        firstName,
-        lastName,
-      },
+      { firstName, lastName }
     );
 
     return updatedDoc;
@@ -316,14 +293,14 @@ export const uploadWalletIcon = async (
     size: number;
     uri: string;
   },
-  userId: string,
+  userId: string
 ) => {
   try {
     const customFileName = `wallet-${userId}-${Date.now()}-${file.name}`;
 
     const response = await storage.createFile(config.userAvatars, ID.unique(), {
       ...file,
-      name: customFileName,
+      name: customFileName
     });
     const fileUrl = `https://fra.cloud.appwrite.io/v1/storage/buckets/${config.userAvatars}/files/${response.$id}/view?project=${config.projectId}`;
     return fileUrl;
@@ -337,7 +314,7 @@ export const createUpdateWallet = async ({
   userId,
   name,
   imageUrl,
-  walletId, // optional for updating
+  walletId
 }: {
   userId: string;
   name: string;
@@ -345,8 +322,19 @@ export const createUpdateWallet = async ({
   walletId?: string;
 }) => {
   try {
+    const currentUser = await getCurrentUser();
+    if (currentUser?.$id !== userId) {
+      throw new Error("Unauthorized: Cannot manage another user's wallets");
+    }
+
     if (walletId) {
-      // 🛠️ Update existing wallet
+      const existingWallet = await databases.getDocument(
+        config.databaseId,
+        config.userWalletId,
+        walletId
+      );
+      verifyOwnership(existingWallet, userId, "userId");
+
       const updatedWallet = await databases.updateDocument(
         config.databaseId,
         config.userWalletId,
@@ -354,25 +342,23 @@ export const createUpdateWallet = async ({
         {
           name,
           name_lower: name.trim().toLowerCase(),
-
-          image: imageUrl,
-        },
+          image: imageUrl
+        }
       );
 
       return updatedWallet;
     } else {
-      // 🔍 Check for existing wallet with same name
       const existingWallets = await databases.listDocuments(
         config.databaseId,
         config.userWalletId,
-        [Query.equal("userId", userId), Query.equal("name", name)],
+        [Query.equal("userId", userId), Query.equal("name", name)]
       );
 
       if (existingWallets.total > 0) {
         throw new Error("A wallet with this name already exists.");
       }
 
-      // ✨ Create new wallet
+      // ✅ Create wallet with user permissions
       const wallet = await databases.createDocument(
         config.databaseId,
         config.userWalletId,
@@ -381,13 +367,13 @@ export const createUpdateWallet = async ({
           userId,
           name,
           name_lower: name.trim().toLowerCase(),
-
           image: imageUrl,
           totalIncome: 0,
           totalExpense: 0,
           amount: 0,
-          created: new Date().toISOString(),
+          created: new Date().toISOString()
         },
+        createUserPermissions(userId)
       );
 
       return wallet;
@@ -400,12 +386,16 @@ export const createUpdateWallet = async ({
 
 export const getWalletById = async (walletId: string) => {
   try {
+    const currentUser = await getCurrentUser();
+    if (!currentUser) throw new Error("User not authenticated");
+
     const wallet = await databases.getDocument(
       config.databaseId,
       config.userWalletId,
-      walletId,
+      walletId
     );
-    return wallet;
+
+    return verifyOwnership(wallet, currentUser.$id, "userId");
   } catch (error) {
     console.error("Error fetching wallet by ID:", error);
     return null;
@@ -414,20 +404,28 @@ export const getWalletById = async (walletId: string) => {
 
 export const deleteUserWalletWithImage = async (walletId: string) => {
   try {
-    const wallet = await getWalletById(walletId);
-    if (!wallet) throw new Error("Wallet not found");
+    const currentUser = await getCurrentUser();
+    if (!currentUser) throw new Error("User not authenticated");
+
+    const wallet = await databases.getDocument(
+      config.databaseId,
+      config.userWalletId,
+      walletId
+    );
+
+    verifyOwnership(wallet, currentUser.$id, "userId");
 
     const transactions = await databases.listDocuments(
       config.databaseId,
       config.transactionCollectionId,
-      [Query.equal("walletId", walletId)],
+      [Query.equal("walletId", walletId)]
     );
 
     for (const transaction of transactions.documents) {
+      verifyOwnership(transaction, currentUser.$id, "uid");
       await handleDeleteTransaction(transaction.$id);
     }
 
-    // 2. Extract the fileId from wallet.image URL (assuming it exists)
     const imageUrl: string = wallet.image;
     let fileId = null;
 
@@ -439,14 +437,12 @@ export const deleteUserWalletWithImage = async (walletId: string) => {
       }
     }
 
-    // 3. Delete the wallet document
     await databases.deleteDocument(
       config.databaseId,
       config.userWalletId,
-      walletId,
+      walletId
     );
 
-    // 4. If fileId found, delete the file from storage bucket
     if (fileId) {
       await storage.deleteFile(config.userAvatars, fileId);
     }
@@ -458,18 +454,47 @@ export const deleteUserWalletWithImage = async (walletId: string) => {
   }
 };
 
-export const getUserWallets = async (
-  userId: string,
-): Promise<Models.DocumentList<Wallet>> => {
-
+export const deleteUserWallet = async (walletId: string) => {
   try {
+    const currentUser = await getCurrentUser();
+    if (!currentUser) throw new Error("User not authenticated");
+
+    const wallet = await databases.getDocument(
+      config.databaseId,
+      config.userWalletId,
+      walletId
+    );
+
+    verifyOwnership(wallet, currentUser.$id, "userId");
+
+    const result = await databases.deleteDocument(
+      config.databaseId,
+      config.userWalletId,
+      walletId
+    );
+    return result;
+  } catch (error) {
+    console.error("Error deleting wallet:", error);
+    return null;
+  }
+};
+
+export const getUserWallets = async (
+  userId: string
+): Promise<Models.DocumentList<Wallet>> => {
+  try {
+    const currentUser = await getCurrentUser();
+    if (currentUser?.$id !== userId) {
+      throw new Error("Unauthorized: Cannot fetch another user's wallets");
+    }
+
     if (!userId) {
-      console.error('[getUserWallets] No userId provided');
+      console.error("[getUserWallets] No userId provided");
       return { total: 0, documents: [] };
     }
 
     if (!config.databaseId || !config.userWalletId) {
-      console.error('[getUserWallets] Missing database config');
+      console.error("[getUserWallets] Missing database config");
       return { total: 0, documents: [] };
     }
 
@@ -479,10 +504,9 @@ export const getUserWallets = async (
       [Query.equal("userId", userId)]
     );
 
-
     return result;
   } catch (error: any) {
-    console.error('[getUserWallets] ❌ Error:', {
+    console.error("[getUserWallets] ❌ Error:", {
       message: error?.message,
       code: error?.code,
       type: error?.type,
@@ -493,82 +517,86 @@ export const getUserWallets = async (
   }
 };
 
-export const deleteUserWallet = async (walletId: string) => {
-  try {
-    const result = await databases.deleteDocument(
-      config.databaseId,
-      config.userWalletId,
-      walletId,
-    );
-    return result;
-  } catch (error) {
-    console.error("Error deleting wallet:", error);
-    return null;
-  }
-};
-
 export const getUserTransaction = async (id: string) => {
   try {
+    const currentUser = await getCurrentUser();
+    if (!currentUser) throw new Error("User not authenticated");
+
     const userTransaction = await databases.getDocument(
       config.databaseId,
       config.transactionCollectionId,
-      id,
+      id
     );
-    return userTransaction;
+
+    return verifyOwnership(userTransaction, currentUser.$id, "uid");
   } catch (error) {
     console.error("No user transaction found", error);
     return null;
   }
 };
 
-export const updateTransactions = async (walletId: string) => {
-  try {
-    const result = await databases.updateDocument(
-      config.databaseId,
-      config.userWalletId,
-      walletId,
-    );
-    return result;
-  } catch (error) {
-    console.error("Error updating transaction ");
-    return null;
-  }
-};
-
 export const getUserTransactions = async (userId: string) => {
   try {
+    const currentUser = await getCurrentUser();
+    if (currentUser?.$id !== userId) {
+      throw new Error("Unauthorized: Cannot fetch another user's transactions");
+    }
+
     const response = await databases.listDocuments(
       config.databaseId,
       config.transactionCollectionId,
-      [Query.equal("uid", userId)],
+      [Query.equal("uid", userId)]
     );
-    return response.documents; // array of transactions
+    return response.documents;
   } catch (error) {
     console.error("Error getting transactions", error);
     return [];
   }
 };
 
+export const updateTransactions = async (walletId: string) => {
+  try {
+    const currentUser = await getCurrentUser();
+    if (!currentUser) throw new Error("User not authenticated");
 
+    const wallet = await databases.getDocument(
+      config.databaseId,
+      config.userWalletId,
+      walletId
+    );
+
+    verifyOwnership(wallet, currentUser.$id, "userId");
+
+    const result = await databases.updateDocument(
+      config.databaseId,
+      config.userWalletId,
+      walletId
+    );
+    return result;
+  } catch (error) {
+    console.error("Error updating transaction");
+    return null;
+  }
+};
 
 export const updateWalletForNewTransaction = async (
   walletId: string,
   amount: number,
   type: "income" | "expense",
-  reverse = false,
+  reverse = false
 ) => {
-  if (process.env.NODE_ENV !== "production") {
-    console.log(
-      `Updating wallet: walletId=${walletId} amount=${amount} type=${type} reverse=${reverse}`,
-    );
-  }
-
   try {
+    const currentUser = await getCurrentUser();
+    if (!currentUser) throw new Error("User not authenticated");
+
     const wallet = await databases.getDocument(
       config.databaseId,
       config.userWalletId,
-      walletId,
+      walletId
     );
+
+    verifyOwnership(wallet, currentUser.$id, "userId");
+
     if (!wallet) {
       throw new Error("Wallet not found!");
     }
@@ -601,13 +629,10 @@ export const updateWalletForNewTransaction = async (
       {
         amount: newAmount,
         totalIncome: newIncome,
-        totalExpense: newExpense,
-      },
+        totalExpense: newExpense
+      }
     );
 
-    if (process.env.NODE_ENV !== "production") {
-      console.log("✅ Wallet updated:", updatedWallet);
-    }
     return updatedWallet;
   } catch (error: any) {
     console.error("❌ Error updating wallet:", error.message);
@@ -616,9 +641,13 @@ export const updateWalletForNewTransaction = async (
 };
 
 export const createOrUpdateTransaction = async (
-  transactionData: Partial<TransactionType>,
+  transactionData: Partial<TransactionType>
 ) => {
   try {
+    const currentUser = await getCurrentUser();
+    const uid = currentUser?.$id;
+    if (!uid) return { success: false, msg: "No user found!" };
+
     const { id, type, walletId, amount, category, date, description, image } =
       transactionData;
 
@@ -626,17 +655,13 @@ export const createOrUpdateTransaction = async (
       return { success: false, msg: "Invalid transaction data!" };
     }
 
-    const currentUser = await getCurrentUser();
-    const uid = currentUser?.$id;
-    if (!uid) return { success: false, msg: "No user found!" };
-
     const wallet = await databases.getDocument(
       config.databaseId!,
       config.userWalletId!,
-      walletId,
+      walletId
     );
 
-    if (!wallet) return { success: false, msg: "Wallet not found!" };
+    verifyOwnership(wallet, uid, "userId");
 
     const transactionPayload = {
       type,
@@ -646,7 +671,7 @@ export const createOrUpdateTransaction = async (
       category: category || "",
       date: date || new Date().toISOString(),
       description: description || "",
-      ...(image && { image }),
+      ...(image && { image })
     };
 
     let transaction;
@@ -655,38 +680,40 @@ export const createOrUpdateTransaction = async (
       const existingTransaction = await databases.getDocument(
         config.databaseId!,
         config.transactionCollectionId!,
-        id,
+        id
       );
+
       if (!existingTransaction) {
         return { success: false, msg: "Transaction not found!" };
       }
 
-      // Reverse old transaction
+      verifyOwnership(existingTransaction, uid, "uid");
+
       await updateWalletForNewTransaction(
         existingTransaction.walletId,
         existingTransaction.amount,
         existingTransaction.type,
-        true,
+        true
       );
 
-      // Apply new transaction
       await updateWalletForNewTransaction(walletId, amount, type, false);
 
       transaction = await databases.updateDocument(
         config.databaseId!,
         config.transactionCollectionId!,
         id,
-        transactionPayload,
+        transactionPayload
       );
     } else {
-      // Apply transaction
       await updateWalletForNewTransaction(walletId, amount, type, false);
 
+      // ✅ Create transaction with user permissions
       transaction = await databases.createDocument(
         config.databaseId!,
         config.transactionCollectionId!,
         ID.unique(),
         transactionPayload,
+        createUserPermissions(uid)
       );
     }
 
@@ -694,46 +721,48 @@ export const createOrUpdateTransaction = async (
       success: true,
       transaction: {
         ...transaction,
-        id: transaction.$id,
-      },
+        id: transaction.$id
+      }
     };
   } catch (err: any) {
     console.error("Error creating/updating transaction:", err);
     return {
       success: false,
-      msg: err?.message || "Unexpected error occurred.",
+      msg: err?.message || "Unexpected error occurred."
     };
   }
 };
 
 export const handleDeleteTransaction = async (transactionId: string) => {
   try {
+    const currentUser = await getCurrentUser();
+    if (!currentUser) throw new Error("User not authenticated");
+
     const transaction = await databases.getDocument(
       config.databaseId!,
       config.transactionCollectionId!,
-      transactionId,
+      transactionId
     );
 
     if (!transaction) {
       return false;
     }
 
-    // Revert the wallet balance
+    verifyOwnership(transaction, currentUser.$id, "uid");
+
     await updateWalletForNewTransaction(
       transaction.walletId,
       transaction.amount,
       transaction.type,
-      true, // Mark as reversal
+      true
     );
 
-    // Delete the transaction document
     await databases.deleteDocument(
       config.databaseId!,
       config.transactionCollectionId!,
-      transactionId,
+      transactionId
     );
 
-    // If there's an associated image, delete it from storage
     if (transaction.image) {
       await storage.deleteFile(config.userAvatars!, transaction.image);
     }
@@ -747,11 +776,17 @@ export const handleDeleteTransaction = async (transactionId: string) => {
 
 export const removeTransactionReceipt = async (transactionId: string) => {
   try {
+    const currentUser = await getCurrentUser();
+    if (!currentUser) throw new Error("User not authenticated");
+
     const transaction = await databases.getDocument(
       config.databaseId,
       config.transactionCollectionId!,
-      transactionId,
+      transactionId
     );
+
+    verifyOwnership(transaction, currentUser.$id, "uid");
+
     if (!transaction) {
       throw new Error("Transaction not found");
     }
@@ -767,9 +802,7 @@ export const removeTransactionReceipt = async (transactionId: string) => {
       config.databaseId!,
       config.transactionCollectionId!,
       transactionId,
-      {
-        image: null,
-      },
+      { image: null }
     );
 
     return { success: true, transaction: updatedTransaction };
@@ -781,29 +814,42 @@ export const removeTransactionReceipt = async (transactionId: string) => {
 
 export const removeWalletIcon = async (walletId: string) => {
   try {
+    const currentUser = await getCurrentUser();
+    if (!currentUser) throw new Error("User not authenticated");
+
     const wallet = await getWalletById(walletId);
+
     if (!wallet) {
       throw new Error("Wallet not found");
     }
+
     if (!wallet.image) {
       console.warn("No wallet icon to remove");
       return { success: false, msg: "No wallet icon found" };
     }
+
     const regex = /\/files\/([^/]+)\/view/;
     const match = wallet.image.match(regex);
     let fileId = null;
+
     if (match && match[1]) {
       fileId = match[1];
     }
+
     if (fileId) {
       await storage.deleteFile(config.userAvatars!, fileId);
     }
+
     const updatedWallet = await databases.updateDocument(
       config.databaseId!,
       config.userWalletId!,
       walletId,
-      { image: null },
+      { image: null }
     );
+
     return { success: true, wallet: updatedWallet };
-  } catch (error) { }
+  } catch (error) {
+    console.error("Error removing wallet icon:", error);
+    return { success: false, msg: "Failed to remove wallet icon" };
+  }
 };

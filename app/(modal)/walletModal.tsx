@@ -16,36 +16,41 @@ import { Input } from "@/~/components/ui/input";
 import icons from "@/constants/icons";
 import {
   createUpdateWallet,
-  pickDocument,
-  uploadAvatar,
   deleteUserWalletWithImage,
-  removeWalletIcon
 } from "@/lib/appwrite";
 import { useGlobalContext } from "@/lib/global-provider";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { BlurView } from "expo-blur";
+import { walletIcons } from "@/constants/data";
 
 const WalletModal = () => {
   const { user, refetch } = useGlobalContext();
   const params = useLocalSearchParams();
   const router = useRouter();
 
-  const [walletIconUri, setWalletIconUri] = useState<string | null>(null);
+  const [selectedIconIndex, setSelectedIconIndex] = useState<number>(0);
   const [walletName, setWalletName] = useState("");
-  const [walletIconFile, setWalletIconFile] = useState<{
-    name: string;
-    type: string;
-    size: number;
-    uri: string;
-  } | null>(null);
-
   const [loading, setLoading] = useState(false);
 
   // Run only once to set initial state
   useEffect(() => {
+    console.log("📋 Params received:", params);
+
     if (params?.id) {
       setWalletName(params.name || "");
-      setWalletIconUri((params.image as string) || null);
+
+      // Extract icon index from the image parameter
+      const imageParam = params.image as string;
+      console.log("🖼️ Image param:", imageParam);
+
+      if (imageParam?.startsWith('icon-')) {
+        const iconIndex = parseInt(imageParam.replace('icon-', ''));
+        console.log("🔢 Extracted icon index:", iconIndex);
+
+        if (!isNaN(iconIndex) && iconIndex >= 0 && iconIndex < walletIcons.length) {
+          setSelectedIconIndex(iconIndex);
+        }
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -60,17 +65,14 @@ const WalletModal = () => {
 
     setLoading(true);
     try {
-      let imageUrl = walletIconUri;
+      // Save the icon index as "icon-0", "icon-1", etc.
+      const imageUrl = `icon-${selectedIconIndex}`;
 
-      if (walletIconFile) {
-        const uploadedImageUrl = await uploadAvatar(walletIconFile);
-        if (!uploadedImageUrl) {
-          alert("Failed to upload image.");
-          setLoading(false);
-          return;
-        }
-        imageUrl = uploadedImageUrl;
-      }
+      console.log("💾 Saving wallet with:");
+      console.log("  - Name:", walletName);
+      console.log("  - ImageUrl:", imageUrl);
+      console.log("  - WalletId:", params?.id || "NEW");
+      console.log("  - UserId:", user?.$id);
 
       const newOrUpdatedWallet = await createUpdateWallet({
         userId: user?.$id,
@@ -78,6 +80,8 @@ const WalletModal = () => {
         imageUrl,
         walletId: params?.id || undefined
       });
+
+      console.log("✅ Wallet saved:", newOrUpdatedWallet);
 
       if (!newOrUpdatedWallet) {
         alert("Failed to save wallet.");
@@ -89,29 +93,10 @@ const WalletModal = () => {
       refetch?.();
       router.back();
     } catch (error: any) {
-      console.error("Error saving wallet:", error?.message, error);
-      alert("An error occurred.");
+      console.error("❌ Error saving wallet:", error?.message, error);
+      alert("An error occurred: " + error?.message);
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleRemoveWalletIcon = async () => {
-    try {
-      if (!params?.id) {
-        Alert.alert("Error", "No wallet ID found");
-        return;
-      }
-      const result = await removeWalletIcon(params.id as string);
-      if (!result?.success) {
-        Alert.alert("Error", result.msg || "Failed to remove wallet icon");
-        return;
-      }
-      Alert.alert("Success", "Wallet icon removed successfully!");
-      setWalletIconUri(null);
-      setWalletIconFile(null);
-    } catch (error) {
-      Alert.alert("Error", "Something went wrong while removing wallet icon");
     }
   };
 
@@ -135,11 +120,11 @@ const WalletModal = () => {
                 refetch?.();
                 router.back();
               } else {
-                alert("Failed to delete wallet and image");
+                alert("Failed to delete wallet");
               }
             } catch (error) {
-              console.error("Error deleting wallet and image:", error);
-              alert("An error occurred while deleting wallet and image.");
+              console.error("Error deleting wallet:", error);
+              alert("An error occurred while deleting wallet.");
             } finally {
               setLoading(false);
             }
@@ -148,16 +133,6 @@ const WalletModal = () => {
       ],
       { cancelable: false }
     );
-  };
-
-  const handleUpload = async () => {
-    if (loading) return;
-
-    const walletIcon = await pickDocument();
-    if (!walletIcon) return;
-
-    setWalletIconUri(walletIcon.uri);
-    setWalletIconFile(walletIcon);
   };
 
   return (
@@ -201,78 +176,61 @@ const WalletModal = () => {
                 <Input
                   value={walletName}
                   onChangeText={setWalletName}
-                  placeholder=""
+                  placeholder="Enter wallet name"
                   autoCapitalize="none"
-                  className="bg-gray-50 border border-gray-300 rounded-lg px-4 py-3"
+                  className="bg-gray-50 border border-gray-300 rounded-lg px-4 py-3 h-14"
                   editable={!loading}
                 />
 
-                <Text className="text-lg font-medium text-gray-700 mt-2 mb-1">
-                  Wallet Icon
+                <Text className="text-lg font-medium text-gray-700 mt-6 mb-3">
+                  Select Wallet Icon
                 </Text>
 
-                {walletIconUri ? (
-                  <View className="mb-2 self-start">
-                    <View className="relative mb-3">
-                      <Image
-                        source={{ uri: walletIconUri }}
-                        className="w-24 h-24 rounded-full border border-gray-300"
-                      />
+                {/* Debug info */}
+                <Text className="text-sm text-gray-500 mb-2">
+                  Currently selected: icon-{selectedIconIndex}
+                </Text>
 
+                <View className="flex-row flex-wrap gap-4 mt-3">
+                  {walletIcons.map((item, index) => {
+                    const isSelected = selectedIconIndex === index;
+
+                    return (
                       <TouchableOpacity
-                        onPress={handleRemoveWalletIcon}
-                        style={{
-                          position: "absolute",
-                          top: -8,
-                          right: -8,
-                          borderRadius: 12,
-                          padding: 2
+                        key={index}
+                        onPress={() => {
+                          console.log("🎯 Icon clicked:", index);
+                          setSelectedIconIndex(index);
                         }}
-                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                        disabled={loading}
+                        className={`p-2 rounded-xl border-2 ${isSelected ? "border-black bg-gray-100" : "border-gray-300"
+                          }`}
                       >
-                        <Image source={icons.remove} className="size-6" />
+                        <Image
+                          source={item.icon}
+                          className="w-12 h-12"
+                          resizeMode="contain"
+                        />
                       </TouchableOpacity>
-                    </View>
-                  </View>
-                ) : (
-                  <Text className="text-gray-500">No wallet icon</Text>
-                )}
+                    );
+                  })}
+                </View>
               </View>
             </ScrollView>
 
-            {/* Bottom Buttons */}
+            {/* Save Button */}
             <View className="gap-4 mt-6">
-              <TouchableOpacity
-                className="border border-gray-300 p-3 rounded-lg bg-black-1"
-                onPress={handleUpload}
-                disabled={loading}
-              >
-                <View className="flex flex-row w-full justify-center items-center gap-1">
-                  <Image
-                    source={icons.upload}
-                    className="size-6"
-                    style={{ tintColor: "white" }}
-                  />
-                  <Text className="text-xl text-center text-white">
-                    {walletIconUri ? "Change Image" : "Upload Image"}
-                  </Text>
-                </View>
-              </TouchableOpacity>
-
               <TouchableOpacity
                 onPress={handleSaveWallet}
                 disabled={loading}
-                className={`w-full rounded-lg border border-gray-600 p-3 ${
-                  loading ? "bg-gray-400" : "bg-black-1"
-                }`}
+                className={`w-full rounded-lg border border-gray-600 p-3 ${loading ? "bg-gray-400" : "bg-black-1"
+                  }`}
               >
                 <Text className="text-white text-center text-xl">
                   {loading
                     ? "Saving..."
                     : params?.id
-                    ? "Update Wallet"
-                    : "Add Wallet"}
+                      ? "Update Wallet"
+                      : "Add Wallet"}
                 </Text>
               </TouchableOpacity>
             </View>

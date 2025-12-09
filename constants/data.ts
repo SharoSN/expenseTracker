@@ -1,5 +1,6 @@
 import icons from "./icons";
 
+
 export const settings = [
   {
     title: "Profile",
@@ -16,6 +17,37 @@ export const settings = [
     icon: icons.edit
   }
 ];
+
+
+
+
+export const walletIcons = [
+  {
+    icon: icons.walletOne
+  },
+  {
+    icon: icons.walletTwo
+  },
+  {
+    icon: icons.walletThree
+  },
+  {
+    icon: icons.walletFour
+  },
+  {
+    icon: icons.walletFive
+  }, {
+    icon: icons.walletSix
+  },
+  {
+    icon: icons.walletSeven
+  }, {
+    icon: icons.walletEight
+  },
+]
+
+
+
 
 import { CategoryType, ExpenseCategoriesType } from "@/types";
 

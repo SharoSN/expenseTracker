@@ -29,8 +29,27 @@ import dots from "@/assets/icons/dots.png";
 import arrowDown from "@/assets/icons/arrowDown.png";
 import arrowUp from "@/assets/icons/arrowUp.png";
 import addT from "@/assets/icons/addT.png";
+import chat from "@/assets/icons/chat.png";
+import walletOne from "@/assets/icons/blue_wallet.png"
+import walletTwo from "@/assets/icons/digital-wallet.png"
+import walletThree from "@/assets/icons/crypto-wallet.png"
+import walletFour from "@/assets/icons/wallet-2.png"
+import walletFive from "@/assets/icons/wallet-3.png"
+import walletSix from "@/assets/icons/wallet-4.png"
+import walletSeven from "@/assets/icons/wallet-5.png"
+import walletEight from "@/assets/icons/wallet-6.png"
+
 
 export default {
+  walletOne,
+  walletTwo,
+  walletThree,
+  walletFour,
+  walletFive,
+  walletSix,
+  walletSeven,
+  walletEight,
+  chat,
   connectbank,
   transaction,
   home,
@@ -62,4 +81,16 @@ export default {
   arrowDown,
   arrowUp,
   addT,
+
 };
+
+
+
+
+
+
+
+
+
+
+

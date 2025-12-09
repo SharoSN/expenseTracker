@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { ScrollView, View } from "react-native";
+import { ScrollView, View, Text } from "react-native";
 import { useAppSocket } from "@/hooks/useAppSocket";
 import { useGlobalContext } from "@/lib/global-provider";
 import ChatInterface from "@/components/chat-interface";
@@ -16,24 +16,23 @@ const Velora = () => {
   const scrollViewRef = useRef<ScrollView>(null);
   const chatInputRef = useRef<any>(null);
 
-  // Single useAppSocket for both voice and text
-  const { sendMessage, lastMessage, clearLastMessage, isConnected } = useAppSocket(user?.$id);
+  const { sendMessage, lastMessage, clearLastMessage, } =
+    useAppSocket(user?.$id);
 
-  // Listen for responses from backend (both voice and text)
+  // Listen for responses from backend
   useEffect(() => {
     if (lastMessage) {
       console.log("📨 Received message from AI:", lastMessage);
 
       const aiMsg = {
         id: Date.now().toString(),
-        role: "assistant",
+        role: "assistant" as const,
         content: lastMessage,
       };
 
       setMessages((prev) => [...prev, aiMsg]);
       setLoading(false);
 
-      // Scroll to bottom
       setTimeout(() => {
         scrollViewRef.current?.scrollToEnd({ animated: true });
       }, 100);
@@ -50,7 +49,7 @@ const Velora = () => {
     // Show user message immediately
     const userMsg = {
       id: Date.now().toString(),
-      role: "user",
+      role: "user" as const,
       content: input.trim(),
     };
     setMessages((prev) => [...prev, userMsg]);
@@ -64,7 +63,6 @@ const Velora = () => {
 
     setInput("");
 
-    // Scroll to bottom
     setTimeout(() => {
       scrollViewRef.current?.scrollToEnd({ animated: true });
     }, 100);
@@ -72,14 +70,15 @@ const Velora = () => {
 
   return (
     <SafeAreaView className="flex-1 bg-white dark:bg-black justify-between">
+
+
       {/* Messages Display */}
       <View className="flex-1 bg-white dark:bg-black">
         <ChatInterface messages={messages} scrollViewRef={scrollViewRef} />
       </View>
 
-      {/* Chat Input with Integrated Mic & Voice Support */}
+      {/* Chat Input */}
       <View className="mb-24">
-
         <ChatInput
           ref={chatInputRef}
           input={input}
@@ -88,11 +87,9 @@ const Velora = () => {
           scrollViewRef={scrollViewRef}
           focusOnMount={false}
           loading={loading}
-          sendMessage={sendMessage}  // ← PASS THIS
+          sendMessage={sendMessage}
         />
-
       </View>
-
     </SafeAreaView>
   );
 };

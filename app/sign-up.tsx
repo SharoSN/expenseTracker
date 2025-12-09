@@ -168,7 +168,7 @@ const SignUp = () => {
               keyboardType={field === "email" ? "email-address" : "default"}
               autoCapitalize="none"
               editable={!loading}
-              className="bg-gray-50 border border-gray-300 rounded-lg px-4 py-3"
+              className="bg-gray-50 border border-gray-300 rounded-lg px-4 py-3 h-14"
             />
           </View>
         ))}

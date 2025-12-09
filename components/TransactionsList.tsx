@@ -19,14 +19,12 @@ export const TransactionsList = ({
 }: TransactionListType) => {
   const router = useRouter();
 
-
   // Add debugging
-
 
   // Validate data before sorting
   const sortedData = React.useMemo(() => {
     if (!Array.isArray(data)) {
-      console.warn('TransactionsList: data is not an array', data);
+      console.warn("TransactionsList: data is not an array", data);
       return [];
     }
 
@@ -34,7 +32,6 @@ export const TransactionsList = ({
       (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
     );
   }, [data]);
-
 
   const handleClick = async (item: TransactionType) => {
     console.log("Raw transaction item:", item);
@@ -56,7 +53,6 @@ export const TransactionsList = ({
         category: item?.category,
         date: item?.date,
         description: item?.description,
-        image: imageUrl, // ✅ This will be a full URL now
         uid: item?.uid,
         walletId: item?.walletId
       }
@@ -64,7 +60,6 @@ export const TransactionsList = ({
   };
 
   // Sort transactions by date (newest first)
-
 
   return (
     <View className="p-4">
@@ -111,8 +106,8 @@ const TransactionItem = ({
     item.type === "income"
       ? incomeCategory
       : categoryKey && expenseCategories[categoryKey]
-        ? expenseCategories[categoryKey]
-        : {
+      ? expenseCategories[categoryKey]
+      : {
           label: "Uncategorized",
           icon: DefaultIcon,
           bgColor: "#E2E8F0"
@@ -131,7 +126,9 @@ const TransactionItem = ({
           textAlign: "center",
           lineHeight: props.size
         }}
-      >?</Text>
+      >
+        ?
+      </Text>
     );
   }
 
@@ -168,8 +165,9 @@ const TransactionItem = ({
         </View>
         <View className="flex flex-col items-center">
           <Text
-            className={`font-semibold ${item.type === "income" ? "text-green-600" : "text-red-600"
-              }`}
+            className={`font-semibold ${
+              item.type === "income" ? "text-green-600" : "text-red-600"
+            }`}
           >
             {item.type === "income" ? "+ $" : "- $"}
             {item.amount}
@@ -185,5 +183,3 @@ const TransactionItem = ({
     </Animated.View>
   );
 };
-
-

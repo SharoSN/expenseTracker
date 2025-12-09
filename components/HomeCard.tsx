@@ -23,6 +23,18 @@ const HomeCard = ({ wallets }) => {
     );
   }, [wallets]);
 
+  const formatCurrency = (amount) => {
+    if (amount === null || amount === undefined) return "$0.00";
+    const num = parseFloat(amount);
+
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: "USD",
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    }).format(num);
+  };
+
   return (
     <SafeAreaView className="bg-white items-center">
       <View className="w-[90%] h-[300px] relative">
@@ -65,7 +77,7 @@ const HomeCard = ({ wallets }) => {
                   <Text className="font-semibold">Income</Text>
                 </View>
                 <Text className="text-green-600 font-bold text-xl mt-2">
-                  {totalIncome}
+                  {formatCurrency(totalIncome)}
                 </Text>
               </View>
 
@@ -76,7 +88,7 @@ const HomeCard = ({ wallets }) => {
                   <Text className="font-semibold">Expense</Text>
                 </View>
                 <Text className="text-red-600 font-bold text-xl mt-2">
-                  {totalExpense}
+                  {formatCurrency(totalExpense)}
                 </Text>
               </View>
             </View>

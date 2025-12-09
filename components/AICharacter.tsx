@@ -7,7 +7,7 @@ import {
   ScrollView,
   Pressable,
   ActivityIndicator,
-  Alert,
+  Alert
 } from "react-native";
 import { ArrowUp, Mic, StopCircle } from "lucide-react-native";
 import Animated from "react-native-reanimated";
@@ -20,7 +20,7 @@ import {
   RecordingPresets,
   setAudioModeAsync,
   AudioModule,
-  useAudioRecorderState,
+  useAudioRecorderState
 } from "expo-audio";
 import { account } from "@/lib/appwrite";
 
@@ -43,9 +43,9 @@ export const ChatInput = forwardRef<RNTextInput, Props>(
       scrollViewRef,
       focusOnMount = false,
       loading = false,
-      sendMessage, // ← Add this
+      sendMessage // ← Add this
     },
-    ref,
+    ref
   ) => {
     const { bottom } = useSafeAreaInsets();
 
@@ -83,7 +83,10 @@ export const ChatInput = forwardRef<RNTextInput, Props>(
           const { granted } =
             await AudioModule.requestRecordingPermissionsAsync();
           if (!granted) {
-            Alert.alert("Permission Required", "Please grant microphone access.");
+            Alert.alert(
+              "Permission Required",
+              "Please grant microphone access."
+            );
             return;
           }
 
@@ -91,7 +94,7 @@ export const ChatInput = forwardRef<RNTextInput, Props>(
             playsInSilentMode: true,
             allowsRecording: true,
             interruptionMode: "mixWithOthers",
-            shouldPlayInBackground: false,
+            shouldPlayInBackground: false
           });
           await audioRecorder.prepareToRecordAsync();
           setRecorderReady(true);
@@ -115,14 +118,18 @@ export const ChatInput = forwardRef<RNTextInput, Props>(
           Alert.alert("Recording Limit", "Maximum recording time reached.");
         }, 300000);
       } else {
-        if (recordingIntervalRef.current) clearInterval(recordingIntervalRef.current);
-        if (recordingTimeoutRef.current) clearTimeout(recordingTimeoutRef.current);
+        if (recordingIntervalRef.current)
+          clearInterval(recordingIntervalRef.current);
+        if (recordingTimeoutRef.current)
+          clearTimeout(recordingTimeoutRef.current);
         setRecordingDuration(0);
       }
 
       return () => {
-        if (recordingIntervalRef.current) clearInterval(recordingIntervalRef.current);
-        if (recordingTimeoutRef.current) clearTimeout(recordingTimeoutRef.current);
+        if (recordingIntervalRef.current)
+          clearInterval(recordingIntervalRef.current);
+        if (recordingTimeoutRef.current)
+          clearTimeout(recordingTimeoutRef.current);
       };
     }, [recorderState.isRecording]);
 
@@ -139,7 +146,9 @@ export const ChatInput = forwardRef<RNTextInput, Props>(
 
         for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
           try {
-            console.log(`📤 Sending audio (attempt ${attempt + 1}/${MAX_RETRIES})`);
+            console.log(
+              `📤 Sending audio (attempt ${attempt + 1}/${MAX_RETRIES})`
+            );
 
             for (let i = 0; i < base64Audio.length; i += CHUNK_SIZE) {
               const chunk = base64Audio.slice(i, i + CHUNK_SIZE);
@@ -153,7 +162,7 @@ export const ChatInput = forwardRef<RNTextInput, Props>(
                 type: "audio",
                 chunk,
                 isLast,
-                format,
+                format
               });
 
               await new Promise((r) => setTimeout(r, 50));
@@ -180,7 +189,10 @@ export const ChatInput = forwardRef<RNTextInput, Props>(
     const startRecording = useCallback(async () => {
       try {
         if (!recorderReady) {
-          Alert.alert("Recorder Not Ready", "Please wait until the recorder is ready.");
+          Alert.alert(
+            "Recorder Not Ready",
+            "Please wait until the recorder is ready."
+          );
           return;
         }
 
@@ -217,7 +229,10 @@ export const ChatInput = forwardRef<RNTextInput, Props>(
 
         if (fileInfo.size < 5000) {
           console.log("🎧 Recording too short — skipping send.");
-          Alert.alert("Recording Too Short", "Please record at least 1 second of audio.");
+          Alert.alert(
+            "Recording Too Short",
+            "Please record at least 1 second of audio."
+          );
           await FileSystem.deleteAsync(uri, { idempotent: true });
           return;
         }
@@ -229,7 +244,7 @@ export const ChatInput = forwardRef<RNTextInput, Props>(
         setIsSendingAudio(true);
 
         const base64Audio = await FileSystem.readAsStringAsync(filePath, {
-          encoding: FileSystem.EncodingType.Base64,
+          encoding: FileSystem.EncodingType.Base64
         });
 
         console.log("🎧 Sending audio to server");
@@ -362,7 +377,11 @@ export const ChatInput = forwardRef<RNTextInput, Props>(
               }}
               disabled={loading || isRecording || isSendingAudio}
             >
-              <View className={`border bg-black-1 rounded-full p-2 ${loading || isRecording || isSendingAudio ? "opacity-50" : ""}`}>
+              <View
+                className={`border bg-black-1 rounded-full p-2 ${
+                  loading || isRecording || isSendingAudio ? "opacity-50" : ""
+                }`}
+              >
                 {loading ? (
                   <ActivityIndicator size="small" color="#fff" />
                 ) : (
@@ -374,7 +393,7 @@ export const ChatInput = forwardRef<RNTextInput, Props>(
         </Animated.View>
       </KeyboardAvoidingView>
     );
-  },
+  }
 );
 
 ChatInput.displayName = "ChatInput";

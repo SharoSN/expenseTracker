@@ -12,6 +12,8 @@
       "bundleIdentifier": "com.redshanks.velora-ai",
       "supportsTablet": true,
       "infoPlist": {
+        "NSPhotoLibraryUsageDescription": "We need access to your photos so you can select images.",
+        "NSPhotoLibraryAddUsageDescription": "We need permission to save edited images to your photo library.",
         "NSMicrophoneUsageDescription": "We need access to your mic for voice input.",
         "NSSpeechRecognitionUsageDescription": "We need access to recognize your speech."
       }
@@ -29,6 +31,12 @@
       "favicon": "./assets/images/logo.png"
     },
     "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "The app accesses your photos to let you share them with your friends."
+        }
+      ],
       "expo-router",
       [
         "expo-splash-screen",

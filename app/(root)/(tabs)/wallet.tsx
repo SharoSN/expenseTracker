@@ -2,35 +2,30 @@ import {
   View,
   Text,
   SafeAreaView,
-  TouchableOpacity,
   Image,
   FlatList,
   RefreshControl,
+  TouchableOpacity
 } from "react-native";
 import React, { useCallback, useState } from "react";
 import Animated, { FadeInDown } from "react-native-reanimated";
 import LottieView from "lottie-react-native";
 import { useRouter } from "expo-router";
 import { useQueryClient } from "@tanstack/react-query";
-
 import AnimatedCounter from "@/components/AnimatedCounter";
 import icons from "@/constants/icons";
 import { useGlobalContext } from "@/lib/global-provider";
 import { useWalletData } from "@/hooks/useWalletData";
+import { getWalletIconSource } from "@/lib/walletIconHelper";
 
 const Wallets = () => {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { user } = useGlobalContext();
 
-  // ✅ Use ONLY the custom hook (it handles everything!)
   const { wallets, isLoading, isError, error, totalBalance } = useWalletData();
-
   const [refreshing, setRefreshing] = useState(false);
 
-
-
-  // ✅ Pull-to-refresh handler
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     await queryClient.invalidateQueries({ queryKey: ["wallets", user?.$id] });
@@ -43,8 +38,8 @@ const Wallets = () => {
       params: {
         id: item?.$id,
         name: item?.name,
-        image: item?.image,
-      },
+        image: item?.image
+      }
     });
   };
 
@@ -88,14 +83,18 @@ const Wallets = () => {
             <AnimatedCounter amount={totalBalance} />
             <Text className="text-2xl text-gray-600 mt-2">Total Balance</Text>
           </View>
+
           <View className="flex-row justify-between items-center mb-4">
             <Text className="text-xl font-semibold text-black-1">
               My Wallets
             </Text>
-            <TouchableOpacity onPress={() => router.push("/(modal)/walletModal")}>
+            <TouchableOpacity
+              onPress={() => router.push("/(modal)/walletModal")}
+            >
               <Image source={icons.addWallet} className="w-8 h-8" />
             </TouchableOpacity>
           </View>
+
           <FlatList
             data={wallets}
             keyExtractor={(item) => item.$id}
@@ -113,13 +112,15 @@ const Wallets = () => {
                   entering={FadeInDown.delay(index * 100).duration(400)}
                   className="flex-row items-center w-full p-4 bg-white rounded-xl shadow-sm"
                 >
-                  <View className="w-14 h-14 rounded-full overflow-hidden bg-sky-50 p-1">
+                  <View className="w-14 h-14 rounded-full overflow-hidden justify-center items-center">
+                    {/* ✅ Use the helper function instead of { uri: item.image } */}
                     <Image
-                      source={item.image ? { uri: item.image } : icons.wallet}
-                      className="w-full h-full p-1  rounded-full"
-                      resizeMode="cover"
+                      source={getWalletIconSource(item.image)}
+                      className="w-10 h-10"
+                      resizeMode="contain"
                     />
                   </View>
+
                   <View className="flex-1 flex-row items-center justify-between ml-4">
                     <View>
                       <Text className="text-lg font-medium text-gray-900">
