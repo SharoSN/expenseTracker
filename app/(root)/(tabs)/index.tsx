@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   RefreshControl,
+  Text
 } from "react-native";
 import { useRouter } from "expo-router";
 import { useQueryClient } from "@tanstack/react-query";
@@ -32,9 +33,7 @@ const Home = () => {
     wallets: storeWallets,
     transactions: storeTransactions,
     setWallets,
-    setTransactions,
-    initializeWebSocket,
-    closeWebSocket,
+    setTransactions
   } = useWalletStore();
 
   const [refreshing, setRefreshing] = useState(false);
@@ -42,15 +41,6 @@ const Home = () => {
   // ---------------------------
   // AUTH + WEBSOCKET SETUP
   // ---------------------------
-  useEffect(() => {
-    if (user?.$id) {
-      initializeWebSocket(user.$id, queryClient);
-    } else {
-      router.replace("/sign-in");
-    }
-
-    return () => closeWebSocket();
-  }, [user?.$id]);
 
   // ---------------------------
   // FETCH: Wallets (React Query)
@@ -59,7 +49,7 @@ const Home = () => {
     wallets: queryWallets,
     isLoading: isLoadingWallets,
     isError: isErrorWallets,
-    totalBalance,
+    totalBalance
   } = useWalletData();
 
   // Sync React Query → Zustand
@@ -73,7 +63,7 @@ const Home = () => {
   const {
     data: queryTransactions,
     isLoading: isLoadingTransactions,
-    isError: isErrorTransactions,
+    isError: isErrorTransactions
   } = useTransactionData();
 
   // Sync React Query → Zustand
@@ -89,7 +79,7 @@ const Home = () => {
 
     await Promise.all([
       queryClient.invalidateQueries(["wallets", user?.$id]),
-      queryClient.invalidateQueries(["transactions", user?.$id]),
+      queryClient.invalidateQueries(["transactions", user?.$id])
     ]);
 
     setRefreshing(false);
@@ -111,7 +101,11 @@ const Home = () => {
   return (
     <SafeAreaView className="flex-1 bg-white">
       {/* Glassmorphism Header */}
-      <BlurView intensity={90} tint="light" className="absolute top-0 left-0 right-0 z-40">
+      <BlurView
+        intensity={90}
+        tint="light"
+        className="absolute top-0 left-0 right-0 z-40"
+      >
         <View className="p-6 mt-12">
           <View className="flex flex-row items-end justify-between">
             <HeaderBox
@@ -130,7 +124,11 @@ const Home = () => {
       {/* Content with top padding to account for fixed header */}
       <ScrollView
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingHorizontal: 24, paddingBottom: 24, paddingTop: 100 }}
+        contentContainerStyle={{
+          paddingHorizontal: 24,
+          paddingBottom: 24,
+          paddingTop: 100
+        }}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
@@ -139,11 +137,12 @@ const Home = () => {
         <HomeCard wallets={storeWallets} />
 
         {/* Transactions UI */}
+
+        {/* TEMP DEBUG */}
         <TransactionsList
           title="Recent Transactions"
-          data={storeTransactions}
+          data={storeTransactions} // ✅ make sure this is storeTransactions not something else
           loading={isLoading}
-          isError={isErrorTransactions}
         />
       </ScrollView>
 

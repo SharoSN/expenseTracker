@@ -11,9 +11,16 @@ import React, { useEffect } from "react";
 import icons from "@/constants/icons";
 import { useGlobalContext } from "@/lib/global-provider";
 import { settings } from "@/constants/data";
-import { avatar } from "@/lib/appwrite";
+import {
+  avatar,
+  confirmEmailVerification,
+  deleteUserAccount
+} from "@/lib/appwrite";
 import { useRouter } from "expo-router";
 import { useAppSocket } from "@/hooks/useAppSocket";
+import CurrencySelector from "@/components/CurrencySelector";
+
+import * as Linking from "expo-linking";
 
 interface SettingsItemProp {
   icon: any;
@@ -30,7 +37,7 @@ const SettingsItem = ({
   onPress,
   textStyle,
   showArrow = true,
-  isDestructive = false,
+  isDestructive = false
 }: SettingsItemProp) => (
   <TouchableOpacity
     onPress={onPress}
@@ -38,7 +45,11 @@ const SettingsItem = ({
   >
     <View className="flex flex-row items-center gap-3">
       <Image source={icon} className="size-6" />
-      <Text className={`text-base font-rubik-medium ${isDestructive ? "text-red-600" : "text-black-300"} ${textStyle}`}>
+      <Text
+        className={`text-base font-rubik-medium ${
+          isDestructive ? "text-red-600" : "text-black-300"
+        } ${textStyle}`}
+      >
         {title}
       </Text>
     </View>
@@ -65,7 +76,8 @@ const Divider = () => <View className="h-px bg-gray-200" />;
 const Profile = () => {
   const router = useRouter();
   const { user, refetch, logoutUser } = useGlobalContext();
-  const { remainingAllowance, checkRemainingAllowance, isConnected } = useAppSocket(user?.$id);
+  const { remainingAllowance, checkRemainingAllowance, isConnected } =
+    useAppSocket(user?.$id);
 
   // Check allowance only when WebSocket is connected
   useEffect(() => {
@@ -88,34 +100,61 @@ const Profile = () => {
           text: "Delete",
           style: "destructive",
           onPress: async () => {
-            // TODO: Implement delete account logic
-            Alert.alert("Account Deletion", "Account deletion feature coming soon.");
-          },
-        },
+            try {
+              const result = await deleteUserAccount(user.$id);
+
+              if (result.success) {
+                // Step 1: Logout and clear the user from context
+                const logoutSuccess = await logoutUser();
+
+                if (logoutSuccess) {
+                  // Step 2: Wait a moment for state to update
+                  await new Promise((resolve) => setTimeout(resolve, 100));
+
+                  // Step 3: Navigate to sign-in
+                  // The AppLayout will detect isLogged is false and redirect
+                  router.replace("/sign-in");
+                } else {
+                  Alert.alert(
+                    "Error",
+                    "Account deleted but failed to logout. Please restart the app."
+                  );
+                }
+              } else {
+                Alert.alert(
+                  "Error",
+                  result.error || "Failed to delete account. Please try again."
+                );
+              }
+            } catch (error) {
+              console.error("Delete account error:", error);
+              Alert.alert(
+                "Error",
+                "An unexpected error occurred while deleting your account."
+              );
+            }
+          }
+        }
       ]
     );
   };
 
   const handleLogout = async () => {
-    Alert.alert(
-      "Sign Out",
-      "Are you sure you want to sign out?",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Sign Out",
-          style: "destructive",
-          onPress: async () => {
-            const success = await logoutUser();
-            if (success) {
-              refetch();
-            } else {
-              Alert.alert("Error", "An error occurred while signing out");
-            }
-          },
-        },
-      ]
-    );
+    Alert.alert("Sign Out", "Are you sure you want to sign out?", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Sign Out",
+        style: "destructive",
+        onPress: async () => {
+          const success = await logoutUser();
+          if (success) {
+            refetch();
+          } else {
+            Alert.alert("Error", "An error occurred while signing out");
+          }
+        }
+      }
+    ]);
   };
 
   const profileSettings = settings.map((item) => {
@@ -128,10 +167,10 @@ const Profile = () => {
   const imageUrl = user?.avatarUrl
     ? user.avatarUrl
     : avatar.getInitials(
-      `${user?.firstName || ""} ${user?.lastName || ""}`,
-      200,
-      200
-    ).href;
+        `${user?.firstName || ""} ${user?.lastName || ""}`,
+        200,
+        200
+      ).href;
 
   const getAllowanceDisplay = () => {
     if (!remainingAllowance) return "Loading...";
@@ -144,14 +183,40 @@ const Profile = () => {
   };
 
   const getAllowanceColor = () => {
-    if (!remainingAllowance || remainingAllowance.limit === -1) return "text-black-1";
+    if (!remainingAllowance || remainingAllowance.limit === -1)
+      return "text-black-1";
 
-    const percentage = (remainingAllowance.remaining / remainingAllowance.limit) * 100;
+    const percentage =
+      (remainingAllowance.remaining / remainingAllowance.limit) * 100;
 
     if (percentage > 50) return "text-blue-900";
     if (percentage > 20) return "text-yellow-500";
     return "text-red-500";
   };
+
+  useEffect(() => {
+    const subscription = Linking.addEventListener("url", async ({ url }) => {
+      const parsed = Linking.parse(url);
+
+      if (parsed.path === "verify-email") {
+        const userId = parsed.queryParams?.userId as string;
+        const secret = parsed.queryParams?.secret as string;
+
+        if (userId && secret) {
+          const success = await confirmEmailVerification(userId, secret);
+
+          if (success) {
+            Alert.alert("Success", "Your email has been verified 🎉");
+            refetch(); // refresh user state
+          } else {
+            Alert.alert("Error", "Email verification failed");
+          }
+        }
+      }
+    });
+
+    return () => subscription.remove();
+  }, []);
 
   return (
     <SafeAreaView className="h-full bg-white">
@@ -177,15 +242,27 @@ const Profile = () => {
             <Text className="text-2xl font-rubik-bold text-black-1 mt-4">
               {user?.firstName} {user?.lastName}
             </Text>
-            <Text className="text-sm text-gray-600 mt-1">
-              {user?.email}
-            </Text>
+            <Text className="text-sm text-gray-600 mt-1">{user?.email}</Text>
+
+            <View className="flex flex-col items-center gap-2 mt-4">
+              <TouchableOpacity
+                className="border border-gray-500 rounded-full px-4 py-2"
+                onPress={async () => {
+                  Alert.alert("Email verification system coming soon!");
+                }}
+              >
+                <Text className="text-sm font-rubik-medium">Verify Email</Text>
+              </TouchableOpacity>
+              <Text className="text-xs text-gray-400">Optional</Text>
+            </View>
           </View>
         </View>
 
+        {/* ✅ EUR Storage Info Card */}
+
         {/* AI Allowance Card */}
         {isConnected && (
-          <View className="mt-8 mx-6 p-4 bg-gradient-to-r from-blue-50 to-blue-100 rounded-xl border border-blue-200 shadow-sm">
+          <View className="mt-6 mx-6 p-4 bg-gradient-to-r from-blue-50 to-blue-100 rounded-xl border border-blue-200 shadow-sm">
             <View className="flex flex-row items-center justify-between mb-2">
               <Text className="text-lg font-rubik-semibold text-blue-900">
                 AI Chat Allowance
@@ -196,7 +273,9 @@ const Profile = () => {
               <Text className="text-sm font-rubik text-blue-800">
                 Daily Limit
               </Text>
-              <Text className={`text-2xl font-rubik-bold ${getAllowanceColor()}`}>
+              <Text
+                className={`text-2xl font-rubik-bold ${getAllowanceColor()}`}
+              >
                 {getAllowanceDisplay()}
               </Text>
             </View>
@@ -205,23 +284,33 @@ const Profile = () => {
               <>
                 <View className="mt-4 h-2 bg-blue-200 rounded-full overflow-hidden">
                   <View
-                    className={`h-full ${(remainingAllowance.remaining / remainingAllowance.limit) * 100 > 50
-                      ? "bg-green-500"
-                      : (remainingAllowance.remaining / remainingAllowance.limit) * 100 > 20
-                        ? "bg-yellow-500"
-                        : "bg-red-500"
-                      }`}
+                    className={`h-full ${
+                      (remainingAllowance.remaining /
+                        remainingAllowance.limit) *
+                        100 >
+                      50
+                        ? "bg-green-500"
+                        : (remainingAllowance.remaining /
+                              remainingAllowance.limit) *
+                              100 >
+                            20
+                          ? "bg-yellow-500"
+                          : "bg-red-500"
+                    }`}
                     style={{
                       width: `${Math.max(
                         5,
-                        (remainingAllowance.remaining / remainingAllowance.limit) * 100
-                      )}%`,
+                        (remainingAllowance.remaining /
+                          remainingAllowance.limit) *
+                          100
+                      )}%`
                     }}
                   />
                 </View>
 
                 <Text className="text-xs text-blue-700 mt-3">
-                  ℹ️ Manual transactions are unlimited. AI interactions reset daily at midnight.
+                  ℹ️ Manual transactions are unlimited. AI interactions reset
+                  daily at midnight.
                 </Text>
               </>
             )}
@@ -233,6 +322,12 @@ const Profile = () => {
             )}
           </View>
         )}
+
+        {/* Currency Selector Section */}
+        <SectionHeader title="Display Preferences" />
+        <View className="mx-6 mb-6">
+          <CurrencySelector />
+        </View>
 
         {/* Settings Section */}
         <SectionHeader title="Account Settings" />
@@ -252,7 +347,6 @@ const Profile = () => {
         <View className="mx-6">
           <SectionContainer>
             <SettingsItem
-
               icon={icons.info}
               title="FAQ"
               onPress={() => {
@@ -265,7 +359,10 @@ const Profile = () => {
               icon={icons.shield}
               title="Privacy Policy"
               onPress={() => {
-                Alert.alert("Privacy Policy", "Privacy policy page coming soon");
+                Alert.alert(
+                  "Privacy Policy",
+                  "Privacy policy page coming soon"
+                );
               }}
               showArrow={true}
             />
@@ -274,7 +371,10 @@ const Profile = () => {
               icon={icons.info}
               title="Terms of Service"
               onPress={() => {
-                Alert.alert("Terms of Service", "Terms of service page coming soon");
+                Alert.alert(
+                  "Terms of Service",
+                  "Terms of service page coming soon"
+                );
               }}
               showArrow={true}
             />
@@ -305,9 +405,7 @@ const Profile = () => {
 
         {/* App Version Footer */}
         <View className="mt-12 mb-6 items-center">
-          <Text className="text-xs text-gray-500">
-            Velora v1.0.0
-          </Text>
+          <Text className="text-xs text-gray-500">Velora v1.0.0</Text>
           <Text className="text-xs text-gray-400 mt-1">
             © 2025 Velora. All rights reserved.
           </Text>

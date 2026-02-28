@@ -12,15 +12,15 @@ interface WalletDropdownComponentProps {
 const WalletDropdownComponent = ({
   wallets,
   selectedWalletId,
-  onSelectWallet,
+  onSelectWallet
 }: WalletDropdownComponentProps) => {
   const [isFocus, setIsFocus] = useState(false);
 
   const dropdownData = useMemo(
     () =>
       wallets.map((wallet) => ({
-        label: `${wallet.name} ($${wallet.amount})`,
-        value: wallet.$id,
+        label: `${wallet.name} (€${wallet.amount})`,
+        value: wallet.$id
       })),
     [wallets]
   );
@@ -42,7 +42,7 @@ const WalletDropdownComponent = ({
       borderColor: "#555555",
       borderRadius: 8,
       paddingHorizontal: 12,
-      backgroundColor: "#fff",
+      backgroundColor: "#fff"
     }),
     []
   );
@@ -57,7 +57,7 @@ const WalletDropdownComponent = ({
       shadowColor: "#000",
       shadowOffset: { width: 0, height: 1 },
       shadowOpacity: 0.1,
-      shadowRadius: 2,
+      shadowRadius: 2
     }),
     []
   );
@@ -102,4 +102,3 @@ const WalletDropdownComponent = ({
 };
 
 export default WalletDropdownComponent;
-

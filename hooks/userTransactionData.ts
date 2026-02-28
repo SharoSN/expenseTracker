@@ -1,23 +1,30 @@
-import { useQuery } from '@tanstack/react-query';
-import { useEffect } from 'react';
-import { useGlobalContext } from '@/lib/global-provider';
-import { useWalletStore } from '@/lib/walletStore';
-import { getUserTransactions } from '@/lib/appwrite';
+import { useQuery } from "@tanstack/react-query";
+import { useEffect } from "react";
+import { useGlobalContext } from "@/lib/global-provider";
+import { useWalletStore } from "@/lib/walletStore";
+import { getUserTransactions } from "@/lib/appwrite";
 
 export const useTransactionData = () => {
   const { user } = useGlobalContext();
   const { setTransactions } = useWalletStore();
 
   const query = useQuery({
-    queryKey: ['transactions', user?.$id],
+    queryKey: ["transactions", user?.$id],
     queryFn: async () => {
-      if (!user?.$id) throw new Error('No user ID');
-      const transactions = await getUserTransactions(user.$id);
-      return transactions; // Already returns array
+      if (!user?.$id) throw new Error("No user ID");
+      console.log("🔍 Fetching transactions for:", user.$id); // ADD THIS
+      try {
+        const transactions = await getUserTransactions(user.$id);
+
+        return transactions; // Already returns array
+      } catch (err) {
+        console.log("❌ Transaction fetch error:", err);
+        throw err;
+      }
     },
     enabled: !!user?.$id,
     staleTime: 1000 * 60 * 2, // 2 minutes
-    retry: 2,
+    retry: 2
   });
 
   // Sync query data to Zustand store
@@ -29,6 +36,6 @@ export const useTransactionData = () => {
 
   return {
     ...query,
-    transactions: query.data || [],
+    transactions: query.data || []
   };
 };

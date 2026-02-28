@@ -24,7 +24,11 @@ import { Input } from "@/~/components/ui/input";
 
 import icons from "@/constants/icons";
 import { useGlobalContext } from "@/lib/global-provider";
-import { useWalletStore } from "@/lib/walletStore";
+import {
+  useWalletStore,
+  formatInDisplayCurrency,
+  CURRENCIES
+} from "@/lib/walletStore";
 import {
   createOrUpdateTransaction,
   handleDeleteTransaction
@@ -39,6 +43,8 @@ const TransactionModal = () => {
 
   // Global state
   const { wallets } = useWalletStore();
+  const displayCurrency = useWalletStore((state) => state.currency);
+  const displayCurrencyConfig = CURRENCIES[displayCurrency];
 
   const [walletName, setWalletName] = useState<string>("");
 
@@ -187,10 +193,11 @@ const TransactionModal = () => {
       return;
     }
 
+    // ✅ Save in EUR (database stores EUR, regardless of display currency)
     saveTransactionMutation.mutate({
       id: params?.id as string,
       type,
-      amount,
+      amount, // ✅ Always EUR amount
       description,
       category,
       date,
@@ -246,6 +253,13 @@ const TransactionModal = () => {
 
   const isPending =
     saveTransactionMutation.isPending || deleteTransactionMutation.isPending;
+
+  // ✅ FIX: Display amount preview in selected currency
+  const getDisplayAmount = () => {
+    if (!transaction.amount)
+      return `${displayCurrencyConfig?.symbol || "€"}0.00`;
+    return formatInDisplayCurrency(transaction.amount);
+  };
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: "transparent" }}>
@@ -303,9 +317,12 @@ const TransactionModal = () => {
               </View>
 
               <View className="mt-6">
-                <Text className="text-lg font-medium text-gray-700 mb-1">
-                  Amount
-                </Text>
+                <View className="flex-row justify-between items-center mb-1">
+                  <Text className="text-lg font-medium text-gray-700">
+                    Amount
+                  </Text>
+                </View>
+
                 <Input
                   keyboardType="numeric"
                   value={transaction.amountText}
@@ -322,6 +339,11 @@ const TransactionModal = () => {
                   className="border border-gray-500 rounded-lg w-full p-4 mt-3 h-16"
                   editable={!isPending}
                 />
+
+                {/* ✅ FIX: Add helper text */}
+                <Text className="text-xs text-gray-500 mt-2">
+                  Enter amount in EUR (€). It will be converted for display.
+                </Text>
               </View>
 
               <View className="mt-6 mb-8">

@@ -8,8 +8,13 @@ import {
   Permission,
   Query,
   Role,
-  Storage
+  Storage,
+  Functions,
+  OAuthProvider
 } from "react-native-appwrite";
+import { openAuthSessionAsync } from "expo-web-browser";
+
+import * as Linking from "expo-linking";
 
 import { TransactionType } from "@/types";
 import { Wallet } from "@/types";
@@ -26,7 +31,8 @@ export const config = {
   userWalletId: process.env.EXPO_PUBLIC_APPWRITE_WALLET_COLLECTION_ID,
   expensesCollectionId: process.env.EXPO_PUBLIC_APPWRITE_EXPENSES_COLLECTION_ID,
   transactionCollectionId:
-    process.env.EXPO_PUBLIC_APPWRITE_TRANSACTION_COLLECTION_ID
+    process.env.EXPO_PUBLIC_APPWRITE_TRANSACTION_COLLECTION_ID,
+  rateLimitCollectionId: process.env.EXPO_PUBLIC_APPWRITE_RATELIMITCOLLECTION_ID
 };
 
 // Initialize Appwrite
@@ -46,6 +52,39 @@ const createUserPermissions = (userId: string) => [
   `update("user:${userId}")`,
   `delete("user:${userId}")`
 ];
+
+export const functions = new Functions(client);
+
+export async function login() {
+  try {
+    const redirectUri = "appwrite-callback-67e5951f000a9b52f73a://";
+    const response = await account.createOAuth2Token(
+      OAuthProvider.Google,
+      redirectUri
+    );
+    if (!response) throw new Error("Create OAuth2 token failed");
+
+    const browserResult = await openAuthSessionAsync(
+      response.toString(),
+      redirectUri
+    );
+    if (browserResult.type !== "success")
+      throw new Error("Create OAuth2 token failed");
+
+    const url = new URL(browserResult.url);
+    const secret = url.searchParams.get("secret")?.toString();
+    const userId = url.searchParams.get("userId")?.toString();
+    if (!secret || !userId) throw new Error("Create OAuth2 token failed");
+
+    const session = await account.createSession(userId, secret);
+    if (!session) throw new Error("Failed to create session");
+
+    return true;
+  } catch (error) {
+    console.error(error);
+    return false;
+  }
+}
 
 // ✅ Helper: Always verify ownership before returning data
 const verifyOwnership = (
@@ -134,18 +173,31 @@ export const logout = async () => {
 export const getCurrentUser = async () => {
   try {
     const user = await account.get();
+    if (!user?.$id) return null;
 
-    if (user?.$id) {
+    try {
+      // Try fetching existing user doc
       const userDoc = await databases.getDocument(
         config.databaseId,
         config.userCollectionId,
         user.$id
       );
-
       return userDoc;
+    } catch {
+      // Document does not exist → create it
+      const newUser = await databases.createDocument(
+        config.databaseId,
+        config.userCollectionId,
+        user.$id,
+        {
+          userId: user.$id,
+          firstName: user.name?.split(" ")[0] || "Unknown",
+          lastName: user.name?.split(" ")[1] || "",
+          email: user.email || ""
+        }
+      );
+      return newUser;
     }
-
-    return null;
   } catch (error) {
     console.error("Get current user error:", error);
     return null;
@@ -851,5 +903,210 @@ export const removeWalletIcon = async (walletId: string) => {
   } catch (error) {
     console.error("Error removing wallet icon:", error);
     return { success: false, msg: "Failed to remove wallet icon" };
+  }
+};
+
+export const deleteUserAccount = async (userId: string) => {
+  try {
+    console.log("🔴 DELETE ACCOUNT STARTED WITH userId:", userId);
+
+    const currentUser = await getCurrentUser();
+    console.log("🔴 currentUser.$id:", currentUser?.$id);
+
+    if (currentUser?.$id !== userId) {
+      throw new Error("Unauthorized: Cannot delete another user's account");
+    }
+
+    // STEP 1: Delete wallets + transactions
+    try {
+      const wallets = await databases.listDocuments(
+        config.databaseId!,
+        config.userWalletId!,
+        [Query.equal("userId", userId)]
+      );
+
+      for (const wallet of wallets.documents) {
+        const transactions = await databases.listDocuments(
+          config.databaseId!,
+          config.transactionCollectionId!,
+          [Query.equal("walletId", wallet.$id)]
+        );
+
+        for (const transaction of transactions.documents) {
+          try {
+            if (transaction.image) {
+              const match = transaction.image.match(/\/files\/([^/]+)\/view/);
+              if (match?.[1]) {
+                await storage.deleteFile(config.userAvatars!, match[1]);
+              }
+            }
+
+            await databases.deleteDocument(
+              config.databaseId!,
+              config.transactionCollectionId!,
+              transaction.$id
+            );
+          } catch (txError) {
+            console.warn("Could not delete transaction:", txError);
+          }
+        }
+
+        // Delete wallet icon
+        try {
+          if (wallet.image) {
+            const match = wallet.image.match(/\/files\/([^/]+)\/view/);
+            if (match?.[1]) {
+              await storage.deleteFile(config.userAvatars!, match[1]);
+            }
+          }
+        } catch (iconError) {
+          console.warn("Could not delete wallet icon:", iconError);
+        }
+
+        // Delete wallet document
+        await databases.deleteDocument(
+          config.databaseId!,
+          config.userWalletId!,
+          wallet.$id
+        );
+      }
+    } catch (walletsError) {
+      console.warn("Could not process wallet deletion:", walletsError);
+    }
+
+    // STEP 2: Delete user avatar
+    try {
+      const userDoc = await databases.getDocument(
+        config.databaseId!,
+        config.userCollectionId!,
+        userId
+      );
+
+      if (userDoc?.avatarUrl) {
+        const match = userDoc.avatarUrl.match(/\/files\/([^/]+)\/view/);
+        if (match?.[1]) {
+          await storage.deleteFile(config.userAvatars!, match[1]);
+        }
+      }
+    } catch (avatarError) {
+      console.warn("Could not delete user avatar:", avatarError);
+    }
+
+    // STEP 3: Delete rate limits
+    try {
+      if (config.databaseId && config.rateLimitCollectionId) {
+        const rateLimits = await databases.listDocuments(
+          config.databaseId,
+          config.rateLimitCollectionId,
+          [Query.equal("userId", userId)]
+        );
+
+        for (const rateLimit of rateLimits.documents) {
+          await databases.deleteDocument(
+            config.databaseId,
+            config.rateLimitCollectionId,
+            rateLimit.$id
+          );
+        }
+      }
+    } catch (rateLimitError) {
+      console.warn("Could not delete rate limits:", rateLimitError);
+    }
+
+    // STEP 4: Delete expenses
+    try {
+      if (config.expensesCollectionId) {
+        const expenses = await databases.listDocuments(
+          config.databaseId!,
+          config.expensesCollectionId,
+          [Query.equal("userId", userId)]
+        );
+
+        for (const expense of expenses.documents) {
+          await databases.deleteDocument(
+            config.databaseId!,
+            config.expensesCollectionId,
+            expense.$id
+          );
+        }
+      }
+    } catch (expensesError) {
+      console.warn("Could not delete expenses:", expensesError);
+    }
+
+    // STEP 5: Delete user document
+    try {
+      await databases.deleteDocument(
+        config.databaseId!,
+        config.userCollectionId!,
+        userId
+      );
+      console.log("✅ User document deleted from database");
+    } catch (dbError) {
+      console.error("❌ Failed to delete user document:", dbError);
+      throw dbError;
+    }
+
+    // STEP 6: DELETE USER FROM AUTH (SERVER-SIDE FUNCTION)
+    try {
+      console.log("🔴 Calling delete-auth-user Appwrite Function");
+
+      const execution = await functions.createExecution(
+        "6942b1f9002d250b9cba", // use your real Function ID from Appwrite
+        JSON.stringify({ userId })
+      );
+
+      const result = JSON.parse(execution.responseBody || "{}");
+
+      if (!result.success) {
+        throw new Error(result.message || "Auth deletion failed");
+      }
+
+      console.log("✅ User fully deleted from Auth");
+    } catch (authError) {
+      console.error("❌ Failed to delete user from Auth:", authError);
+      throw authError;
+    }
+
+    return {
+      success: true,
+      message: "Account and all associated data have been permanently deleted."
+    };
+  } catch (error) {
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown error occurred";
+
+    console.error("❌ Account deletion error:", error);
+
+    return {
+      success: false,
+      message: "Failed to delete account. Please try again.",
+      error: errorMessage
+    };
+  }
+};
+
+export const sendEmailVerification = async () => {
+  try {
+    const verification = await account.createVerification(
+      "com.velora.ai://verify-email"
+    );
+    return verification;
+  } catch (error) {
+    console.error("Send email verification error:", error);
+    throw error;
+  }
+};
+
+export const confirmEmailVerification = async (
+  userId: string,
+  secret: string
+) => {
+  try {
+    await account.updateVerification(userId, secret);
+    return true;
+  } catch (error) {
+    console.error("Confirm verification error:", error);
+    return false;
   }
 };

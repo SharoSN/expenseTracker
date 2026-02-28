@@ -8,7 +8,6 @@ import {
   TouchableOpacity
 } from "react-native";
 import React, { useCallback, useState } from "react";
-import Animated, { FadeInDown } from "react-native-reanimated";
 import LottieView from "lottie-react-native";
 import { useRouter } from "expo-router";
 import { useQueryClient } from "@tanstack/react-query";
@@ -17,11 +16,15 @@ import icons from "@/constants/icons";
 import { useGlobalContext } from "@/lib/global-provider";
 import { useWalletData } from "@/hooks/useWalletData";
 import { getWalletIconSource } from "@/lib/walletIconHelper";
+import { formatCurrency, useWalletStore } from "@/lib/walletStore";
 
 const Wallets = () => {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { user } = useGlobalContext();
+
+  // ✅ FIX: Subscribe to currency changes to trigger re-render
+  const currency = useWalletStore((state) => state.currency);
 
   const { wallets, isLoading, isError, error, totalBalance } = useWalletData();
   const [refreshing, setRefreshing] = useState(false);
@@ -42,6 +45,9 @@ const Wallets = () => {
       }
     });
   };
+
+  // ✅ FIX: Format totalBalance with selected currency
+  const formattedTotalBalance = formatCurrency(totalBalance, currency);
 
   const renderContent = () => {
     if (isLoading && wallets.length === 0) {
@@ -80,7 +86,12 @@ const Wallets = () => {
       <View className="flex-1 p-8 pb-24">
         <View className="bg-blue-50 p-8 rounded-2xl flex-1">
           <View className="justify-center items-center mb-6">
-            <AnimatedCounter amount={totalBalance} />
+            {/* ✅ FIX: Pass formatted balance string to AnimatedCounter */}
+            <AnimatedCounter
+              amount={totalBalance}
+              displayText={formattedTotalBalance}
+              currency={currency}
+            />
             <Text className="text-2xl text-gray-600 mt-2">Total Balance</Text>
           </View>
 
@@ -108,10 +119,7 @@ const Wallets = () => {
                 onPress={() => openWallet(item)}
                 className="mb-3"
               >
-                <Animated.View
-                  entering={FadeInDown.delay(index * 100).duration(400)}
-                  className="flex-row items-center w-full p-4 bg-white rounded-xl shadow-sm"
-                >
+                <View className="flex-row items-center w-full p-4 bg-white rounded-xl shadow-sm">
                   <View className="w-14 h-14 rounded-full overflow-hidden justify-center items-center">
                     {/* ✅ Use the helper function instead of { uri: item.image } */}
                     <Image
@@ -126,13 +134,14 @@ const Wallets = () => {
                       <Text className="text-lg font-medium text-gray-900">
                         {item.name}
                       </Text>
+                      {/* ✅ FIX: Always pass currency to formatCurrency */}
                       <Text className="text-sm text-gray-600">
-                        ${item.amount}
+                        {formatCurrency(item.amount, currency)}
                       </Text>
                     </View>
                     <Image source={icons.rightArrow} className="w-6 h-6" />
                   </View>
-                </Animated.View>
+                </View>
               </TouchableOpacity>
             )}
           />

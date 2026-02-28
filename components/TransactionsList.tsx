@@ -1,16 +1,156 @@
-import { View, Text, ActivityIndicator, TouchableOpacity } from "react-native";
-import React from "react";
-import { FlashList } from "@shopify/flash-list";
+import {
+  View,
+  Text,
+  ActivityIndicator,
+  TouchableOpacity,
+  Animated
+} from "react-native";
+import React, { useEffect, useRef } from "react";
 import {
   TransactionItemProps,
   TransactionListType,
   TransactionType
 } from "@/types";
 import { expenseCategories, incomeCategory } from "@/constants/data";
-import Animated, { FadeInDown } from "react-native-reanimated";
 import { useRouter } from "expo-router";
-import { config, storage } from "@/lib/appwrite";
+import { config } from "@/lib/appwrite";
+import { formatCurrency, useWalletStore } from "@/lib/walletStore";
 
+// ─── Default icon defined at TOP LEVEL ───────────────────────────────────────
+const DefaultIcon = ({ size, color }: { size: number; color: string }) => (
+  <Text
+    style={{
+      fontSize: size,
+      color,
+      fontWeight: "bold",
+      textAlign: "center",
+      lineHeight: size
+    }}
+  >
+    ?
+  </Text>
+);
+
+// ─── Transaction Item ─────────────────────────────────────────────────────────
+const TransactionItem = ({
+  item,
+  index,
+  handleClick
+}: TransactionItemProps) => {
+  const currency = useWalletStore((state) => state.currency);
+  const categoryKey = item?.category ?? null;
+
+  // Fade-in animation using built-in Animated (works on physical devices)
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const translateAnim = useRef(new Animated.Value(20)).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(fadeAnim, {
+        toValue: 1,
+        duration: 300,
+        delay: index * 50,
+        useNativeDriver: true
+      }),
+      Animated.timing(translateAnim, {
+        toValue: 0,
+        duration: 300,
+        delay: index * 50,
+        useNativeDriver: true
+      })
+    ]).start();
+  }, []);
+
+  const category =
+    item.type === "income"
+      ? incomeCategory
+      : categoryKey && expenseCategories[categoryKey]
+        ? expenseCategories[categoryKey]
+        : { label: "Uncategorized", icon: DefaultIcon, bgColor: "#E2E8F0" };
+
+  const IconComponent = category.icon || DefaultIcon;
+
+  return (
+    <Animated.View
+      style={{
+        opacity: fadeAnim,
+        transform: [{ translateY: translateAnim }],
+        paddingVertical: 12,
+        paddingHorizontal: 16,
+        borderBottomWidth: 1,
+        borderBottomColor: "#f1f5f9"
+      }}
+    >
+      <View
+        style={{
+          flexDirection: "row",
+          justifyContent: "space-between",
+          alignItems: "center"
+        }}
+      >
+        {/* Left side - Icon + Text */}
+        <View
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            flex: 1,
+            marginRight: 8
+          }}
+        >
+          <TouchableOpacity onPress={() => handleClick(item)}>
+            <View
+              style={{
+                backgroundColor: category.bgColor,
+                width: 48,
+                height: 48,
+                alignItems: "center",
+                justifyContent: "center",
+                borderRadius: 8,
+                marginRight: 10
+              }}
+            >
+              <IconComponent size={26} weight="fill" color="white" />
+            </View>
+          </TouchableOpacity>
+
+          <View style={{ flex: 1 }}>
+            <Text
+              style={{ fontSize: 15, fontWeight: "600", color: "#0f172a" }}
+              numberOfLines={1}
+            >
+              {category.label}
+            </Text>
+            <Text style={{ fontSize: 13, color: "#94a3b8" }} numberOfLines={1}>
+              {item.description || "No details provided"}
+            </Text>
+          </View>
+        </View>
+
+        {/* Right side - Amount + Date */}
+        <View style={{ alignItems: "flex-end" }}>
+          <Text
+            style={{
+              fontWeight: "600",
+              fontSize: 14,
+              color: item.type === "income" ? "#10b981" : "#f43f5e"
+            }}
+          >
+            {item.type === "income" ? "+ " : "- "}
+            {formatCurrency(item.amount, currency)}
+          </Text>
+          <Text style={{ fontSize: 11, color: "#94a3b8", marginTop: 2 }}>
+            {new Date(item.date).toLocaleDateString("en-US", {
+              day: "2-digit",
+              month: "short"
+            })}
+          </Text>
+        </View>
+      </View>
+    </Animated.View>
+  );
+};
+
+// ─── Transactions List ────────────────────────────────────────────────────────
 export const TransactionsList = ({
   loading,
   data = [],
@@ -19,30 +159,18 @@ export const TransactionsList = ({
 }: TransactionListType) => {
   const router = useRouter();
 
-  // Add debugging
-
-  // Validate data before sorting
   const sortedData = React.useMemo(() => {
-    if (!Array.isArray(data)) {
-      console.warn("TransactionsList: data is not an array", data);
-      return [];
-    }
-
+    if (!Array.isArray(data)) return [];
     return [...data].sort(
       (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
     );
   }, [data]);
 
-  const handleClick = async (item: TransactionType) => {
-    console.log("Raw transaction item:", item);
-
+  const handleClick = (item: TransactionType) => {
     let imageUrl = null;
-
     if (item.image) {
       imageUrl = `https://fra.cloud.appwrite.io/v1/storage/buckets/${config.userAvatars}/files/${item.image}/view?project=${config.projectId}`;
     }
-
-    console.log("Final Image URL passed to modal:", imageUrl);
 
     router.push({
       pathname: "/(modal)/transactionModal",
@@ -54,132 +182,57 @@ export const TransactionsList = ({
         date: item?.date,
         description: item?.description,
         uid: item?.uid,
-        walletId: item?.walletId
+        walletId: item?.walletId,
+        ...(imageUrl && { imageUrl })
       }
     });
   };
 
-  // Sort transactions by date (newest first)
-
-  return (
-    <View className="p-4">
-      {title && <Text className="text-xl font-semibold mb-2">{title}</Text>}
-
-      <View className="flex-1">
-        <FlashList
-          data={sortedData}
-          renderItem={({ item, index }: TransactionItemProps) => (
-            <TransactionItem
-              item={item}
-              index={index}
-              handleClick={handleClick}
-            />
-          )}
-          estimatedItemSize={60}
-          ListEmptyComponent={() =>
-            loading ? (
-              <View className="flex-1 justify-center items-center mt-6">
-                <ActivityIndicator size="large" color="#6366F1" />
-                <Text className="text-gray-500 mt-2">Loading...</Text>
-              </View>
-            ) : (
-              <Text className="text-center text-gray-700 mt-4 font-bold">
-                {emptyListMessage}
-              </Text>
-            )
-          }
-        />
-      </View>
-    </View>
-  );
-};
-
-// Helper subcomponent (not exported)
-const TransactionItem = ({
-  item,
-  index,
-  handleClick
-}: TransactionItemProps) => {
-  const categoryKey = item?.category ?? null;
-
-  const category =
-    item.type === "income"
-      ? incomeCategory
-      : categoryKey && expenseCategories[categoryKey]
-      ? expenseCategories[categoryKey]
-      : {
-          label: "Uncategorized",
-          icon: DefaultIcon,
-          bgColor: "#E2E8F0"
-        };
-
-  const IconComponent = category.icon;
-
-  // Custom default icon component - a simple question mark icon
-  function DefaultIcon(props: { size: number; color: string }) {
+  if (loading) {
     return (
-      <Text
-        style={{
-          fontSize: props.size,
-          color: props.color,
-          fontWeight: "bold",
-          textAlign: "center",
-          lineHeight: props.size
-        }}
-      >
-        ?
-      </Text>
+      <View style={{ padding: 16 }}>
+        {title && (
+          <Text style={{ fontSize: 18, fontWeight: "600", marginBottom: 12 }}>
+            {title}
+          </Text>
+        )}
+        <View style={{ alignItems: "center", paddingVertical: 32 }}>
+          <ActivityIndicator size="large" color="#6366F1" />
+          <Text style={{ color: "#94a3b8", marginTop: 8 }}>Loading...</Text>
+        </View>
+      </View>
     );
   }
 
   return (
-    <Animated.View
-      entering={FadeInDown.delay(index * 100).duration(400)}
-      className="p-4 border-b border-gray-200"
-    >
-      <View className="flex flex-row justify-between items-center">
-        <View className="flex flex-row items-center gap-6">
-          <TouchableOpacity onPress={() => handleClick(item)}>
-            <View
-              style={{ backgroundColor: category.bgColor }}
-              className="w-12 items-center p-2 rounded-md"
-            >
-              {IconComponent ? (
-                <IconComponent size={30} weight="fill" color="white" />
-              ) : (
-                <DefaultIcon size={30} color="#718096" />
-              )}
-            </View>
-          </TouchableOpacity>
+    <View style={{ paddingHorizontal: 16, paddingBottom: 16 }}>
+      {title && (
+        <Text
+          style={{
+            fontSize: 18,
+            fontWeight: "600",
+            marginBottom: 12,
+            color: "#0f172a"
+          }}
+        >
+          {title}
+        </Text>
+      )}
 
-          <View>
-            <Text className="text-lg font-semibold">{category.label}</Text>
-            {item.description ? (
-              <Text className="text-gray-500 text-sm">{item.description}</Text>
-            ) : (
-              <Text className="text-gray-600 italic text-sm">
-                No details provided
-              </Text>
-            )}
-          </View>
-        </View>
-        <View className="flex flex-col items-center">
-          <Text
-            className={`font-semibold ${
-              item.type === "income" ? "text-green-600" : "text-red-600"
-            }`}
-          >
-            {item.type === "income" ? "+ $" : "- $"}
-            {item.amount}
-          </Text>
-          <Text className="text-sm text-gray-600">
-            {new Date(item.date).toLocaleDateString("en-US", {
-              day: "2-digit",
-              month: "short"
-            })}
-          </Text>
-        </View>
-      </View>
-    </Animated.View>
+      {sortedData.length === 0 ? (
+        <Text style={{ textAlign: "center", color: "#94a3b8", marginTop: 16 }}>
+          {emptyListMessage}
+        </Text>
+      ) : (
+        sortedData.map((item, index) => (
+          <TransactionItem
+            key={item.$id || index}
+            item={item}
+            index={index}
+            handleClick={handleClick}
+          />
+        ))
+      )}
+    </View>
   );
 };

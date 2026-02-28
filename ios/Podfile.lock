@@ -1,7 +1,5 @@
 PODS:
   - boost (1.84.0)
-  - BVLinearGradient (2.8.3):
-    - React-Core
   - DoubleConversion (1.1.6)
   - EXAV (15.0.2):
     - ExpoModulesCore
@@ -14,7 +12,7 @@ PODS:
   - EXJSONUtils (0.14.0)
   - EXManifests (0.15.8):
     - ExpoModulesCore
-  - Expo (52.0.47):
+  - Expo (52.0.49):
     - ExpoModulesCore
   - expo-dev-client (5.0.20):
     - EXManifests
@@ -237,7 +235,7 @@ PODS:
     - ExpoModulesCore
   - ExpoHaptics (14.0.1):
     - ExpoModulesCore
-  - ExpoHead (4.0.21):
+  - ExpoHead (4.0.22):
     - ExpoModulesCore
   - ExpoImagePicker (16.0.6):
     - ExpoModulesCore
@@ -313,7 +311,7 @@ PODS:
     - ReactCommon/turbomodule/bridging
     - ReactCommon/turbomodule/core
     - Yoga
-  - Plaid (6.4.1)
+  - Plaid (6.4.3)
   - RCT-Folly (2024.10.14.00):
     - boost
     - DoubleConversion
@@ -1594,13 +1592,32 @@ PODS:
     - Yoga
   - react-native-get-random-values (1.11.0):
     - React-Core
-  - react-native-netinfo (11.4.1):
-    - React-Core
-  - react-native-plaid-link-sdk (12.6.0):
+  - react-native-netinfo (11.5.2):
     - DoubleConversion
     - glog
     - hermes-engine
-    - Plaid (~> 6.4.1)
+    - RCT-Folly (= 2024.10.14.00)
+    - RCTRequired
+    - RCTTypeSafety
+    - React-Core
+    - React-debug
+    - React-Fabric
+    - React-featureflags
+    - React-graphics
+    - React-ImageManager
+    - React-NativeModulesApple
+    - React-RCTFabric
+    - React-rendererdebug
+    - React-utils
+    - ReactCodegen
+    - ReactCommon/turbomodule/bridging
+    - ReactCommon/turbomodule/core
+    - Yoga
+  - react-native-plaid-link-sdk (12.7.0):
+    - DoubleConversion
+    - glog
+    - hermes-engine
+    - Plaid (~> 6.4.2)
     - RCT-Folly (= 2024.10.14.00)
     - RCTRequired
     - RCTTypeSafety
@@ -1692,27 +1709,6 @@ PODS:
     - JitsiWebRTC (~> 124.0.0)
     - React-Core
   - react-native-webview (13.12.5):
-    - DoubleConversion
-    - glog
-    - hermes-engine
-    - RCT-Folly (= 2024.10.14.00)
-    - RCTRequired
-    - RCTTypeSafety
-    - React-Core
-    - React-debug
-    - React-Fabric
-    - React-featureflags
-    - React-graphics
-    - React-ImageManager
-    - React-NativeModulesApple
-    - React-RCTFabric
-    - React-rendererdebug
-    - React-utils
-    - ReactCodegen
-    - ReactCommon/turbomodule/bridging
-    - ReactCommon/turbomodule/core
-    - Yoga
-  - react-native-worklets-core (1.6.2):
     - DoubleConversion
     - glog
     - hermes-engine
@@ -2264,7 +2260,7 @@ PODS:
     - ReactCommon/turbomodule/bridging
     - ReactCommon/turbomodule/core
     - Yoga
-  - RNWorklets (0.7.0-nightly-20251019-2fda791ca):
+  - RNWorklets (0.4.1):
     - DoubleConversion
     - glog
     - hermes-engine
@@ -2276,9 +2272,7 @@ PODS:
     - React-Fabric
     - React-featureflags
     - React-graphics
-    - React-hermes
     - React-ImageManager
-    - React-jsi
     - React-NativeModulesApple
     - React-RCTFabric
     - React-rendererdebug
@@ -2286,9 +2280,9 @@ PODS:
     - ReactCodegen
     - ReactCommon/turbomodule/bridging
     - ReactCommon/turbomodule/core
-    - RNWorklets/worklets (= 0.7.0-nightly-20251019-2fda791ca)
+    - RNWorklets/worklets (= 0.4.1)
     - Yoga
-  - RNWorklets/worklets (0.7.0-nightly-20251019-2fda791ca):
+  - RNWorklets/worklets (0.4.1):
     - DoubleConversion
     - glog
     - hermes-engine
@@ -2300,9 +2294,7 @@ PODS:
     - React-Fabric
     - React-featureflags
     - React-graphics
-    - React-hermes
     - React-ImageManager
-    - React-jsi
     - React-NativeModulesApple
     - React-RCTFabric
     - React-rendererdebug
@@ -2310,9 +2302,9 @@ PODS:
     - ReactCodegen
     - ReactCommon/turbomodule/bridging
     - ReactCommon/turbomodule/core
-    - RNWorklets/worklets/apple (= 0.7.0-nightly-20251019-2fda791ca)
+    - RNWorklets/worklets/apple (= 0.4.1)
     - Yoga
-  - RNWorklets/worklets/apple (0.7.0-nightly-20251019-2fda791ca):
+  - RNWorklets/worklets/apple (0.4.1):
     - DoubleConversion
     - glog
     - hermes-engine
@@ -2324,9 +2316,7 @@ PODS:
     - React-Fabric
     - React-featureflags
     - React-graphics
-    - React-hermes
     - React-ImageManager
-    - React-jsi
     - React-NativeModulesApple
     - React-RCTFabric
     - React-rendererdebug
@@ -2340,7 +2330,6 @@ PODS:
 
 DEPENDENCIES:
   - boost (from `../node_modules/react-native/third-party-podspecs/boost.podspec`)
-  - BVLinearGradient (from `../node_modules/react-native-linear-gradient`)
   - DoubleConversion (from `../node_modules/react-native/third-party-podspecs/DoubleConversion.podspec`)
   - EXAV (from `../node_modules/expo-av/ios`)
   - EXConstants (from `../node_modules/expo-constants/ios`)
@@ -2417,7 +2406,6 @@ DEPENDENCIES:
   - "react-native-voice (from `../node_modules/@react-native-voice/voice`)"
   - react-native-webrtc (from `../node_modules/react-native-webrtc`)
   - react-native-webview (from `../node_modules/react-native-webview`)
-  - react-native-worklets-core (from `../node_modules/react-native-worklets-core`)
   - React-nativeconfig (from `../node_modules/react-native/ReactCommon`)
   - React-NativeModulesApple (from `../node_modules/react-native/ReactCommon/react/nativemodule/core/platform/ios`)
   - React-perflogger (from `../node_modules/react-native/ReactCommon/reactperflogger`)
@@ -2464,8 +2452,6 @@ SPEC REPOS:
 EXTERNAL SOURCES:
   boost:
     :podspec: "../node_modules/react-native/third-party-podspecs/boost.podspec"
-  BVLinearGradient:
-    :path: "../node_modules/react-native-linear-gradient"
   DoubleConversion:
     :podspec: "../node_modules/react-native/third-party-podspecs/DoubleConversion.podspec"
   EXAV:
@@ -2615,8 +2601,6 @@ EXTERNAL SOURCES:
     :path: "../node_modules/react-native-webrtc"
   react-native-webview:
     :path: "../node_modules/react-native-webview"
-  react-native-worklets-core:
-    :path: "../node_modules/react-native-worklets-core"
   React-nativeconfig:
     :path: "../node_modules/react-native/ReactCommon"
   React-NativeModulesApple:
@@ -2692,14 +2676,13 @@ EXTERNAL SOURCES:
 
 SPEC CHECKSUMS:
   boost: 1dca942403ed9342f98334bf4c3621f011aa7946
-  BVLinearGradient: cb006ba232a1f3e4f341bb62c42d1098c284da70
   DoubleConversion: f16ae600a246532c4020132d54af21d0ddb2a385
   EXAV: 4c41f0a6ae54a0b96597abc90e37962ab2ee0d85
   EXConstants: fcfc75800824ac2d5c592b5bc74130bad17b146b
   EXImageLoader: e5da974e25b13585c196b658a440720c075482d5
   EXJSONUtils: 01fc7492b66c234e395dcffdd5f53439c5c29c93
   EXManifests: a19d50504b8826546a4782770317bc83fffec87d
-  Expo: 1687edb10c76b0c0f135306d6ae245379f50ed54
+  Expo: 4bb70893882e6382b41d1e910d7226c6a1b85f0a
   expo-dev-client: db44302cdbe0ec55b0ef1849c9a23a76dec6dbac
   expo-dev-launcher: 792cd1c83fbec4a1a66fe91a0c283368dbad851c
   expo-dev-menu: dd3197d2b0107ee036ffd85f95e75a950ab52ada
@@ -2711,7 +2694,7 @@ SPEC CHECKSUMS:
   ExpoFileSystem: 42d363d3b96f9afab980dcef60d5657a4443c655
   ExpoFont: f354e926f8feae5e831ec8087f36652b44a0b188
   ExpoHaptics: 8d199b2f33245ea85289ff6c954c7ee7c00a5b5d
-  ExpoHead: df924203fbf8e0913fc38b0f6aec71f9a9115482
+  ExpoHead: 2a14db58219c0a506e4a409ea83f884eab23f555
   ExpoImagePicker: 24e5ba8da111f74519b1e6dc556e0b438b2b8464
   ExpoKeepAwake: b0171a73665bfcefcfcc311742a72a956e6aa680
   ExpoLinearGradient: 35ebd83b16f80b3add053a2fd68cc328ed927f60
@@ -2731,8 +2714,8 @@ SPEC CHECKSUMS:
   JitsiWebRTC: b47805ab5668be38e7ee60e2258f49badfe8e1d0
   lottie-ios: a881093fab623c467d3bce374367755c272bdd59
   lottie-react-native: 4ba06e2e4985c53dda6595a880f780e7ff551df1
-  Plaid: 29f8e793c094261b6fd7761d4c587a92eec30e80
-  RCT-Folly: 7b4f73a92ad9571b9dbdb05bb30fad927fa971e1
+  Plaid: defe81f56261e503209b5d28ed538834fd377a3c
+  RCT-Folly: ea9d9256ba7f9322ef911169a9f696e5857b9e17
   RCTDeprecation: ebe712bb05077934b16c6bf25228bdec34b64f83
   RCTRequired: ca91e5dd26b64f577b528044c962baf171c6b716
   RCTTypeSafety: e7678bd60850ca5a41df9b8dc7154638cb66871f
@@ -2762,14 +2745,13 @@ SPEC CHECKSUMS:
   React-Mapbuffer: 33546a3ebefbccb8770c33a1f8a5554fa96a54de
   React-microtasksnativemodule: d80ff86c8902872d397d9622f1a97aadcc12cead
   react-native-get-random-values: d16467cf726c618e9c7a8c3c39c31faa2244bbba
-  react-native-netinfo: cec9c4e86083cb5b6aba0e0711f563e2fbbff187
-  react-native-plaid-link-sdk: 0ebd877bcad3b928beafe45258b7a65a950a0438
+  react-native-netinfo: 29447a5eeffb12a8b439ee0324271ee281a9792d
+  react-native-plaid-link-sdk: b01d029b30775a67de7bd1dda6dc160df9bff466
   react-native-safe-area-context: cd916088cac5300c3266876218377518987b995e
   react-native-segmented-control: 7578bb8808205cc5d09fbb026eb32829d7b0b56f
   react-native-voice: 908a0eba96c8c3d643e4f98b7232c6557d0a6f9c
   react-native-webrtc: e8f0ce746353adc2744a2b933645e1aeb41eaa74
   react-native-webview: 6b9fc65c1951203a3e958ff3cc0a858d4b6be901
-  react-native-worklets-core: 1ca7988edb1deef9a8c0b19d24b96c0eded51d03
   React-nativeconfig: 8efdb1ef1e9158c77098a93085438f7e7b463678
   React-NativeModulesApple: cebca2e5320a3d66e123cade23bd90a167ffce5e
   React-perflogger: 72e653eb3aba9122f9e57cf012d22d2486f33358
@@ -2804,10 +2786,10 @@ SPEC CHECKSUMS:
   RNReanimated: 2e5069649cbab2c946652d3b97589b2ae0526220
   RNScreens: 362f4c861dd155f898908d5035d97b07a3f1a9d1
   RNSVG: b889dc9c1948eeea0576a16cc405c91c37a12c19
-  RNWorklets: 77db56931866b540ec1ea664fe4aaac395a6603e
+  RNWorklets: 26fc2f95b580a09460668b72044a153cced585fb
   SocketRocket: d4aabe649be1e368d1318fdf28a022d714d65748
   Yoga: feb4910aba9742cfedc059e2b2902e22ffe9954a
 
-PODFILE CHECKSUM: c547f46686d8f80cea94985d36ca6fc2e128eaf2
+PODFILE CHECKSUM: 2a891c9af8da22236acfa8d9827120644f611fff
 
 COCOAPODS: 1.16.2

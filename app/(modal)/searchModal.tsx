@@ -49,7 +49,8 @@ const SearchModal = () => {
         txn.description?.toLowerCase().includes(query) ||
         txn.category?.toLowerCase().includes(query) ||
         txn.type?.toLowerCase().includes(query) ||
-        txn.amount?.toString().includes(query)
+        txn.amount?.toString().includes(query) ||
+        txn.date?.toLowerCase().includes(query)
       );
     });
 
@@ -89,7 +90,7 @@ const SearchModal = () => {
                   autoCapitalize="none"
                   value={searchQuery}
                   onChangeText={setSearchQuery}
-                  className="bg-gray-50 border border-gray-300 rounded-lg px-4 py-3"
+                  className="bg-gray-50 border border-gray-300 rounded-lg px-4 py-3 h-14"
                 />
 
                 <TransactionsList

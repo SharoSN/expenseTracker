@@ -5,25 +5,51 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/logo.png",
-    "scheme": "myapp",
+    "scheme": ["velora", "appwrite-callback-67e5951f000a9b52f73a"],
     "userInterfaceStyle": "automatic",
     "jsEngine": "hermes",
     "ios": {
       "bundleIdentifier": "com.redshanks.velora-ai",
       "supportsTablet": true,
+      "newArchEnabled": true,
       "infoPlist": {
         "NSPhotoLibraryUsageDescription": "We need access to your photos so you can select images.",
         "NSPhotoLibraryAddUsageDescription": "We need permission to save edited images to your photo library.",
         "NSMicrophoneUsageDescription": "We need access to your mic for voice input.",
-        "NSSpeechRecognitionUsageDescription": "We need access to recognize your speech."
+        "NSSpeechRecognitionUsageDescription": "We need access to recognize your speech.",
+        "NSBonjourServiceTypes": ["_http._tcp"],
+        "LSApplicationQueriesSchemes": ["googlechrome", "instagram", "fb"],
+        "CFBundleURLTypes": [
+          {
+            "CFBundleURLSchemes": ["velora"],
+            "CFBundleURLName": "com.redshanks.velora-ai"
+          }
+        ]
       }
     },
     "android": {
       "package": "com.redshanks.veloraai",
+      "newArchEnabled": true,
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/logo.png",
         "backgroundColor": "#ffffff"
-      }
+      },
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "*.velora.com"
+            },
+            {
+              "scheme": "velora"
+            }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        }
+      ]
     },
     "web": {
       "bundler": "metro",
@@ -54,9 +80,7 @@
           "disableAudioDefaults": true
         }
       ],
-      [
-        "@wdragon/react-native-voice"
-      ],
+      ["@wdragon/react-native-voice"],
       "expo-dev-client"
     ],
     "experiments": {

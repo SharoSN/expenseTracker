@@ -1,87 +1,122 @@
 import { create } from "zustand";
-import { QueryClient } from "@tanstack/react-query";
 
-// Define the state structure
+// ✅ Currency configuration - EUR is default, but all currencies available for DISPLAY
+export const CURRENCIES = {
+  EUR: { code: "EUR", symbol: "€", name: "Euro" },
+  USD: { code: "USD", symbol: "$", name: "US Dollar" },
+  GBP: { code: "GBP", symbol: "£", name: "British Pound" },
+  JPY: { code: "JPY", symbol: "¥", name: "Japanese Yen" },
+  CAD: { code: "CAD", symbol: "C$", name: "Canadian Dollar" },
+  AUD: { code: "AUD", symbol: "A$", name: "Australian Dollar" }
+};
+
+// ✅ Define the state structure — no WebSocket here, that lives in useAppSocket.ts
 interface WalletState {
   wallets: any[];
   transactions: any[];
-  socket: WebSocket | null;
+  currency: string;
+  exchangeRates: Record<string, number>;
+  setCurrency: (currency: string) => void;
+  setExchangeRates: (rates: Record<string, number>) => void;
   setWallets: (wallets: any[]) => void;
   setTransactions: (transactions: any[]) => void;
-  initializeWebSocket: (userId: string, queryClient: QueryClient) => void;
-  closeWebSocket: () => void;
 }
 
-export const useWalletStore = create<WalletState>((set, get) => ({
+export const useWalletStore = create<WalletState>((set) => ({
   // Initial state
   wallets: [],
   transactions: [],
-  socket: null,
+  currency: "EUR",
+  exchangeRates: {},
 
   // Actions
+  setCurrency: (currency) => {
+    if (CURRENCIES[currency]) {
+      set({ currency });
+      console.log(`💱 Display currency changed to: ${currency}`);
+    } else {
+      console.warn(`❌ Unsupported currency: ${currency}`);
+    }
+  },
+
+  setExchangeRates: (rates) => set({ exchangeRates: rates }),
+
   setWallets: (wallets) => set({ wallets }),
-  setTransactions: (transactions) => set({ transactions }),
 
-  closeWebSocket: () => {
-    const { socket } = get();
-    if (socket) {
-      socket.close();
-      set({ socket: null });
-      console.log("❌ Global WS disconnected");
-    }
-  },
-
-  initializeWebSocket: (userId, queryClient) => {
-    // Prevent multiple connections
-    if (get().socket) {
-      return;
-    }
-
-    const newSocket = new WebSocket("ws://localhost:3000");
-    set({ socket: newSocket });
-
-    newSocket.onopen = () => {
-      console.log("✅ Global WS connected");
-      newSocket.send(JSON.stringify({ type: "user_connected", userId }));
-    };
-
-    newSocket.onclose = () => {
-      console.log("❌ Global WS disconnected (will try to reconnect on next focus)");
-      // Nullify the socket so it can be re-initialized
-      set({ socket: null });
-    };
-
-    newSocket.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      console.log("Głopbal WS message:", data);
-
-      // When a change happens on the server, we don't need to manually
-      // update the state here. Instead, we tell React Query to invalidate its
-      // cache for the relevant queries. React Query will then automatically
-      // refetch the data, and the `onSuccess` handlers of our `useQuery` hooks
-      // will update the Zustand store. This keeps the data flow consistent.
-
-      switch (data.type) {
-        case "wallet_created":
-        case "wallet_deleted":
-        case "wallet_updated":
-          // Invalidate both wallets and transactions as a wallet update can affect both
-          queryClient.invalidateQueries({ queryKey: ["wallets", userId] });
-          queryClient.invalidateQueries({ queryKey: ["transactions", userId] });
-          break;
-
-        case "transaction_created":
-        case "transaction_deleted":
-        case "transaction_updated":
-          // Invalidate both transactions and wallets as a transaction update affects wallet balances
-          queryClient.invalidateQueries({ queryKey: ["transactions", userId] });
-          queryClient.invalidateQueries({ queryKey: ["wallets", userId] });
-          break;
-      }
-    };
-
-    newSocket.onerror = (error) => {
-      console.error("❌ Global WS Error:", error);
-    };
-  },
+  setTransactions: (transactions) => set({ transactions })
 }));
+
+// ✅ Format EUR amount to selected display currency
+export const formatCurrency = (
+  amountInEUR: number | string | null | undefined,
+  currencyCode = "EUR"
+): string => {
+  if (amountInEUR === null || amountInEUR === undefined) {
+    return `${CURRENCIES[currencyCode]?.symbol || "€"}0.00`;
+  }
+
+  const currencyConfig = CURRENCIES[currencyCode];
+  if (!currencyConfig) {
+    return `€${parseFloat(String(amountInEUR)).toFixed(2)}`;
+  }
+
+  const eurAmount = parseFloat(String(amountInEUR)) || 0;
+  const exchangeRates = useWalletStore.getState().exchangeRates;
+  const exchangeRate = exchangeRates[currencyCode] || 1;
+  const convertedAmount = eurAmount * exchangeRate;
+
+  const localeMap: Record<string, string> = {
+    EUR: "de-DE",
+    USD: "en-US",
+    GBP: "en-GB",
+    JPY: "ja-JP",
+    CAD: "en-CA",
+    AUD: "en-AU"
+  };
+
+  const locale = localeMap[currencyCode] || "de-DE";
+
+  return new Intl.NumberFormat(locale, {
+    style: "currency",
+    currency: currencyCode,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  }).format(convertedAmount);
+};
+
+// ✅ Format EUR amount (always EUR regardless of display setting)
+export const formatEUR = (amount: number | string): string => {
+  const parsed = parseFloat(String(amount)) || 0;
+  return new Intl.NumberFormat("de-DE", {
+    style: "currency",
+    currency: "EUR",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  }).format(parsed);
+};
+
+// ✅ Format amount in selected display currency
+export const formatInDisplayCurrency = (
+  amountInEUR: number | string
+): string => {
+  const displayCurrency = useWalletStore.getState().currency;
+  return formatCurrency(amountInEUR, displayCurrency);
+};
+
+// ✅ Format amount only (no currency symbol)
+export const formatEURAmount = (amount: number | string): string => {
+  const parsed = parseFloat(String(amount)) || 0;
+  return new Intl.NumberFormat("de-DE", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  }).format(parsed);
+};
+
+// ✅ Get currency config
+export const useCurrency = () => {
+  const currency = useWalletStore((state) => state.currency);
+  return CURRENCIES[currency] || CURRENCIES.EUR;
+};
+
+// ✅ Get EUR symbol
+export const getEURSymbol = (): string => "€";

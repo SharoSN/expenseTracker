@@ -1,18 +1,24 @@
-import { Redirect, Slot, router } from "expo-router";
+import { Redirect, Slot } from "expo-router";
 import { useEffect, useState } from "react";
 import { ActivityIndicator, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-
 import { useGlobalContext } from "@/lib/global-provider";
 
 export default function AppLayout() {
   const { loading, isLogged } = useGlobalContext();
   const [isReady, setIsReady] = useState(false);
+  const [shouldRedirect, setShouldRedirect] = useState(false);
 
   useEffect(() => {
-    // Wait for the app to be ready before routing
     setIsReady(true);
   }, []);
+
+  // Monitor isLogged changes and redirect if logged out
+  useEffect(() => {
+    if (isReady && !isLogged && !loading) {
+      setShouldRedirect(true);
+    }
+  }, [isLogged, loading, isReady]);
 
   // While loading OR until app is ready, show loading screen
   if (loading || !isReady) {
@@ -24,7 +30,7 @@ export default function AppLayout() {
   }
 
   // If not logged in, redirect to sign-in
-  if (!isLogged) {
+  if (!isLogged || shouldRedirect) {
     return <Redirect href="/sign-in" />;
   }
 

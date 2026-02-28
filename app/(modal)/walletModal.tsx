@@ -14,10 +14,7 @@ import HeaderBox from "@/components/HeaderBox";
 import BackButton from "@/components/BackButton";
 import { Input } from "@/~/components/ui/input";
 import icons from "@/constants/icons";
-import {
-  createUpdateWallet,
-  deleteUserWalletWithImage,
-} from "@/lib/appwrite";
+import { createUpdateWallet, deleteUserWalletWithImage } from "@/lib/appwrite";
 import { useGlobalContext } from "@/lib/global-provider";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { BlurView } from "expo-blur";
@@ -43,11 +40,15 @@ const WalletModal = () => {
       const imageParam = params.image as string;
       console.log("🖼️ Image param:", imageParam);
 
-      if (imageParam?.startsWith('icon-')) {
-        const iconIndex = parseInt(imageParam.replace('icon-', ''));
+      if (imageParam?.startsWith("icon-")) {
+        const iconIndex = parseInt(imageParam.replace("icon-", ""));
         console.log("🔢 Extracted icon index:", iconIndex);
 
-        if (!isNaN(iconIndex) && iconIndex >= 0 && iconIndex < walletIcons.length) {
+        if (
+          !isNaN(iconIndex) &&
+          iconIndex >= 0 &&
+          iconIndex < walletIcons.length
+        ) {
           setSelectedIconIndex(iconIndex);
         }
       }
@@ -188,7 +189,7 @@ const WalletModal = () => {
 
                 {/* Debug info */}
                 <Text className="text-sm text-gray-500 mb-2">
-                  Currently selected: icon-{selectedIconIndex}
+                  Currently selected:
                 </Text>
 
                 <View className="flex-row flex-wrap gap-4 mt-3">
@@ -202,8 +203,11 @@ const WalletModal = () => {
                           console.log("🎯 Icon clicked:", index);
                           setSelectedIconIndex(index);
                         }}
-                        className={`p-2 rounded-xl border-2 ${isSelected ? "border-black bg-gray-100" : "border-gray-300"
-                          }`}
+                        className={`p-2 rounded-xl border-2 ${
+                          isSelected
+                            ? "border-black bg-gray-100"
+                            : "border-gray-300"
+                        }`}
                       >
                         <Image
                           source={item.icon}
@@ -222,8 +226,9 @@ const WalletModal = () => {
               <TouchableOpacity
                 onPress={handleSaveWallet}
                 disabled={loading}
-                className={`w-full rounded-lg border border-gray-600 p-3 ${loading ? "bg-gray-400" : "bg-black-1"
-                  }`}
+                className={`w-full rounded-lg border border-gray-600 p-3 ${
+                  loading ? "bg-gray-400" : "bg-black-1"
+                }`}
               >
                 <Text className="text-white text-center text-xl">
                   {loading

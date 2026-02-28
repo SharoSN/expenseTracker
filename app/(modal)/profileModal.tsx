@@ -15,7 +15,6 @@ import icons from "@/constants/icons";
 import { Input } from "@/~/components/ui/input";
 import {
   avatar,
-  pickDocument,
   updateName,
   updateUserAvatar,
   uploadAvatar
@@ -169,7 +168,7 @@ const ProfileModal = () => {
                   onChangeText={setUpdatedFirstName}
                   placeholder="Enter your new first name"
                   autoCapitalize="none"
-                  className="bg-gray-50 border border-gray-300 rounded-lg px-4 py-3"
+                  className="bg-gray-50 border border-gray-300 rounded-lg px-4 py-3 h-16"
                 />
 
                 <Text className="text-sm font-medium text-gray-700 mb-1 mt-4">
@@ -180,7 +179,7 @@ const ProfileModal = () => {
                   onChangeText={setUpdatedLastName}
                   placeholder="Enter your new last name"
                   autoCapitalize="none"
-                  className="bg-gray-50 border border-gray-300 rounded-lg px-4 py-3"
+                  className="bg-gray-50 border border-gray-300 rounded-lg px-4 py-3 h-16"
                 />
               </View>
             </ScrollView>

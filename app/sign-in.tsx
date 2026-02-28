@@ -8,10 +8,10 @@ import {
   Image,
   Alert,
   TextInput,
-  ActivityIndicator,
+  ActivityIndicator
 } from "react-native";
 import icons from "@/constants/icons";
-import { loginWithEmail } from "@/lib/appwrite";
+import { loginWithEmail, login, getCurrentUser } from "@/lib/appwrite";
 import { useGlobalContext } from "@/lib/global-provider";
 import { Link, Redirect, useRouter } from "expo-router";
 import LottieView from "lottie-react-native";
@@ -28,24 +28,51 @@ const SignIn = () => {
     return <Redirect href="/" />;
   }
 
-  const handleLogin = async () => {
+  const handleEmailLogin = async () => {
     if (!email || !password) {
-      Alert.alert("Error", "Please enter both email and password.");
+      Alert.alert("Error", "Please enter email and password");
       return;
     }
 
     setIsSubmitting(true);
-
     try {
       const result = await loginWithEmail({ email, password });
-      console.log("Login result:", result);
+      console.log("Email login result:", result);
       if (result) {
         await refetch();
         router.replace("/");
       }
     } catch (error) {
-      console.error("Login error:", error);
-      Alert.alert("Error", "Failed to login");
+      console.error("Email login error:", error);
+      Alert.alert("Error", "Failed to login with email");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleGoogleLogin = async () => {
+    setIsSubmitting(true);
+    try {
+      const result = await login();
+      if (result) {
+        console.log("Google login successful");
+
+        // 🔥 Ensure user document exists and get user data
+        const user = await getCurrentUser();
+        if (!user) {
+          Alert.alert("Error", "Failed to create or fetch user data");
+          return;
+        }
+
+        // Redirect after successful login
+        await refetch(); // Refresh global context with user data
+        router.replace("/");
+      } else {
+        Alert.alert("Error", "Failed to login with Google");
+      }
+    } catch (error) {
+      console.error("Google login error:", error);
+      Alert.alert("Error", "Failed to login with Google");
     } finally {
       setIsSubmitting(false);
     }
@@ -58,7 +85,7 @@ const SignIn = () => {
         contentContainerStyle={{
           flexGrow: 1,
           justifyContent: "center",
-          alignItems: "center",
+          alignItems: "center"
         }}
         className="w-full max-w-md"
       >
@@ -114,7 +141,7 @@ const SignIn = () => {
         <View className="w-full p-4">
           <TouchableOpacity
             className="border border-gray-500  bg-slate-900 rounded-lg p-3 mt-5 items-center justify-center mb-4"
-            onPress={handleLogin}
+            onPress={handleEmailLogin}
             disabled={isSubmitting}
           >
             {isSubmitting ? (
@@ -137,7 +164,7 @@ const SignIn = () => {
 
         <View className="w-full p-4">
           <TouchableOpacity
-            onPress={handleLogin}
+            onPress={handleGoogleLogin}
             className="border border-gray-500 bg-slate-900 rounded-lg p-3 mt-5 items-center justify-center mb-4 w-full"
             disabled={isSubmitting}
           >
