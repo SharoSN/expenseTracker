@@ -27,6 +27,7 @@
         <category android:name="android.intent.category.DEFAULT"/>
         <category android:name="android.intent.category.BROWSABLE"/>
         <data android:scheme="velora"/>
+        <data android:scheme="appwrite-callback-67e5951f000a9b52f73a"/>
         <data android:scheme="com.redshanks.veloraai"/>
         <data android:scheme="exp+veloraai"/>
       </intent-filter>

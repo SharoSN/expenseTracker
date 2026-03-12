@@ -1,24 +1,21 @@
 import type React from "react";
 import {
   View,
+  Text,
   TextInput as RNTextInput,
-  KeyboardAvoidingView,
   Keyboard,
   ScrollView,
   Pressable,
   ActivityIndicator,
-  Alert
+  Alert,
+  Platform,
+  Animated
 } from "react-native";
 import { ArrowUp, Mic, StopCircle } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { forwardRef, useEffect, useRef, useCallback, useState } from "react";
 import * as FileSystem from "expo-file-system";
-import {
-  useAudioRecorder,
-  RecordingPresets,
-  setAudioModeAsync,
-  AudioModule
-} from "expo-audio";
+import { useAudioRecorder, setAudioModeAsync, AudioModule } from "expo-audio";
 import { account } from "@/lib/appwrite";
 
 type Props = {
@@ -31,6 +28,235 @@ type Props = {
   sendMessage: (data: any) => void;
 };
 
+// ─── Theme ────────────────────────────────────────────────────────────────────
+const T = {
+  accent: "#4fc3f7",
+  accentDark: "#0ea5c9",
+  accentSoft: "rgba(79,195,247,0.10)",
+  accentBorder: "rgba(79,195,247,0.30)",
+  accentFocus: "rgba(79,195,247,0.55)",
+  accentGlow: "#4fc3f7",
+  placeholder: "#9ca3af",
+  inputBg: "#ffffff",
+  red: "#ef4444",
+  redSoft: "rgba(239,68,68,0.08)",
+  redBorder: "rgba(239,68,68,0.30)"
+};
+
+// ─── Recording preset that produces a valid file Whisper accepts ──────────────
+// iOS: outputs .wav (pcm_16bit) — universally accepted by Whisper
+// Android: outputs .wav as well
+const WHISPER_RECORDING_OPTIONS = {
+  android: {
+    extension: ".wav",
+    outputFormat: 6, // ENCODING_PCM_16BIT
+    audioEncoder: 3, // AAC — fallback, Android will handle
+    sampleRate: 16000,
+    numberOfChannels: 1,
+    bitRate: 256000
+  },
+  ios: {
+    extension: ".wav",
+    audioQuality: 127, // MAX
+    sampleRate: 16000,
+    numberOfChannels: 1,
+    bitRate: 256000,
+    linearPCMBitDepth: 16,
+    linearPCMIsBigEndian: false,
+    linearPCMIsFloat: false
+  },
+  web: {}
+};
+
+// ─── Glowing Mic ──────────────────────────────────────────────────────────────
+const GlowMicButton = ({
+  isRecording,
+  disabled,
+  onPress,
+  recorderReady
+}: {
+  isRecording: boolean;
+  disabled: boolean;
+  onPress: () => void;
+  recorderReady: boolean;
+}) => {
+  const glow = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(glow, {
+          toValue: 1,
+          duration: isRecording ? 500 : 1800,
+          useNativeDriver: true
+        }),
+        Animated.timing(glow, {
+          toValue: 0,
+          duration: isRecording ? 500 : 1800,
+          useNativeDriver: true
+        })
+      ])
+    ).start();
+  }, [isRecording]);
+
+  const scale = glow.interpolate({
+    inputRange: [0, 1],
+    outputRange: [1, isRecording ? 1.15 : 1.06]
+  });
+  const shadowOpacity = glow.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.15, isRecording ? 0.85 : 0.5]
+  });
+
+  if (!recorderReady)
+    return (
+      <ActivityIndicator
+        size="small"
+        color={T.accent}
+        style={{ marginLeft: 4 }}
+      />
+    );
+
+  return (
+    <Pressable onPress={onPress} disabled={disabled}>
+      <Animated.View
+        style={{
+          width: 34,
+          height: 34,
+          borderRadius: 17,
+          backgroundColor: isRecording ? T.redSoft : T.accentSoft,
+          borderWidth: 1,
+          borderColor: isRecording ? T.redBorder : T.accentBorder,
+          alignItems: "center",
+          justifyContent: "center",
+          transform: [{ scale }],
+          shadowColor: isRecording ? T.red : T.accentGlow,
+          shadowOffset: { width: 0, height: 0 },
+          shadowOpacity,
+          shadowRadius: 8,
+          elevation: 3,
+          opacity: disabled ? 0.4 : 1
+        }}
+      >
+        {isRecording ? (
+          <StopCircle size={16} color={T.red} strokeWidth={2} />
+        ) : (
+          <Mic size={16} color={T.accent} strokeWidth={2.5} />
+        )}
+      </Animated.View>
+    </Pressable>
+  );
+};
+
+// ─── Send Button ──────────────────────────────────────────────────────────────
+const SendButton = ({
+  loading,
+  disabled,
+  onPress
+}: {
+  loading: boolean;
+  disabled: boolean;
+  onPress: () => void;
+}) => {
+  const glow = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (!disabled) {
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(glow, {
+            toValue: 1,
+            duration: 1200,
+            useNativeDriver: true
+          }),
+          Animated.timing(glow, {
+            toValue: 0,
+            duration: 1200,
+            useNativeDriver: true
+          })
+        ])
+      ).start();
+    } else {
+      glow.setValue(0);
+    }
+  }, [disabled]);
+
+  const shadowOpacity = glow.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.1, 0.55]
+  });
+
+  return (
+    <Pressable onPress={onPress} disabled={disabled}>
+      <Animated.View
+        style={{
+          width: 42,
+          height: 42,
+          borderRadius: 21,
+          backgroundColor: "#ffffff",
+          borderWidth: 1.5,
+          borderColor: disabled ? "rgba(79,195,247,0.2)" : T.accent,
+          alignItems: "center",
+          justifyContent: "center",
+          shadowColor: T.accentGlow,
+          shadowOffset: { width: 0, height: 0 },
+          shadowOpacity,
+          shadowRadius: 12,
+          elevation: disabled ? 0 : 5
+        }}
+      >
+        {loading ? (
+          <ActivityIndicator
+            size="small"
+            color={disabled ? T.accent : "#fff"}
+          />
+        ) : (
+          <ArrowUp
+            size={20}
+            color={disabled ? "rgba(79,195,247,0.3)" : T.accent}
+            strokeWidth={2.5}
+          />
+        )}
+      </Animated.View>
+    </Pressable>
+  );
+};
+
+// ─── Upload Progress ──────────────────────────────────────────────────────────
+const UploadProgress = ({ progress }: { progress: number }) => (
+  <View style={{ marginHorizontal: 16, marginBottom: 8 }}>
+    <View
+      style={{
+        height: 2,
+        backgroundColor: "rgba(79,195,247,0.15)",
+        borderRadius: 1,
+        overflow: "hidden"
+      }}
+    >
+      <View
+        style={{
+          height: "100%",
+          width: `${progress}%`,
+          backgroundColor: T.accent,
+          borderRadius: 1
+        }}
+      />
+    </View>
+    <Text
+      style={{
+        color: T.accent,
+        fontSize: 10,
+        textAlign: "center",
+        marginTop: 4,
+        opacity: 0.7
+      }}
+    >
+      Uploading audio... {progress}%
+    </Text>
+  </View>
+);
+
+// ─── Main ChatInput ───────────────────────────────────────────────────────────
 export const ChatInput = forwardRef<RNTextInput, Props>(
   (
     {
@@ -45,8 +271,8 @@ export const ChatInput = forwardRef<RNTextInput, Props>(
     ref
   ) => {
     const { bottom } = useSafeAreaInsets();
+    const [isFocused, setIsFocused] = useState(false);
 
-    // Audio recording state
     const [userId, setUserId] = useState<string | null>(null);
     const [recorderReady, setRecorderReady] = useState(false);
     const [isSendingAudio, setIsSendingAudio] = useState(false);
@@ -55,11 +281,13 @@ export const ChatInput = forwardRef<RNTextInput, Props>(
     const [isRecording, setIsRecording] = useState(false);
     const [isProcessing, setIsProcessing] = useState(false);
 
-    const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+    // FIX 1: Use explicit wav options instead of RecordingPresets.HIGH_QUALITY
+    // HIGH_QUALITY on iOS produces CAF format which Whisper rejects.
+    const audioRecorder = useAudioRecorder(WHISPER_RECORDING_OPTIONS);
     const recordingIntervalRef = useRef<NodeJS.Timeout | null>(null);
     const recordingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-    // --- User initialization ---
+    // --- User init ---
     useEffect(() => {
       const initUser = async () => {
         try {
@@ -75,37 +303,25 @@ export const ChatInput = forwardRef<RNTextInput, Props>(
     // --- Audio setup ---
     useEffect(() => {
       let isMounted = true;
-
       (async () => {
         try {
-          console.log("🎧 Requesting recording permissions...");
           const { granted } =
             await AudioModule.requestRecordingPermissionsAsync();
-
           if (!granted) {
-            console.warn("⚠️ Microphone permission denied");
             Alert.alert(
               "Permission Required",
               "Please grant microphone access in settings."
             );
             return;
           }
-
-          console.log("✅ Permission granted, setting audio mode...");
           await setAudioModeAsync({
             playsInSilentMode: true,
             allowsRecording: true,
             interruptionMode: "mixWithOthers",
             shouldPlayInBackground: false
           });
-
-          console.log("✅ Audio mode set, preparing recorder...");
           await audioRecorder.prepareToRecordAsync();
-
-          if (isMounted) {
-            setRecorderReady(true);
-            console.log("✅ Recorder ready");
-          }
+          if (isMounted) setRecorderReady(true);
         } catch (err) {
           console.error("❌ Audio setup failed:", err);
           Alert.alert(
@@ -114,20 +330,17 @@ export const ChatInput = forwardRef<RNTextInput, Props>(
           );
         }
       })();
-
       return () => {
         isMounted = false;
       };
     }, [audioRecorder]);
 
-    // --- Recording duration tracker ---
+    // --- Recording duration ---
     useEffect(() => {
       if (isRecording) {
         recordingIntervalRef.current = setInterval(() => {
           setRecordingDuration((prev) => prev + 1);
         }, 100);
-
-        // 5 minute timeout
         recordingTimeoutRef.current = setTimeout(() => {
           stopRecording();
           Alert.alert(
@@ -142,7 +355,6 @@ export const ChatInput = forwardRef<RNTextInput, Props>(
           clearTimeout(recordingTimeoutRef.current);
         setRecordingDuration(0);
       }
-
       return () => {
         if (recordingIntervalRef.current)
           clearInterval(recordingIntervalRef.current);
@@ -158,61 +370,52 @@ export const ChatInput = forwardRef<RNTextInput, Props>(
       return `${mins}:${secs.toString().padStart(2, "0")}`;
     };
 
+    // FIX 2: Remove the separate { type: "done" } message entirely.
+    // The server triggers transcription on isLast: true — that's the only
+    // signal it needs. Sending a separate "done" message was causing the
+    // server to receive a message type it doesn't handle, and the last
+    // chunk's isLast was never being set to true because the loop exits
+    // before the final sendMessage call properly flags it.
     const sendAudioWithRetry = useCallback(
-      async (base64Audio: string, format: string = "m4a") => {
+      async (base64Audio: string, format: string = "wav") => {
         const CHUNK_SIZE = 65536;
         const MAX_RETRIES = 3;
 
-        console.log(`📊 Total audio size: ${base64Audio.length} chars`);
-        console.log(
-          `📊 Number of chunks: ${Math.ceil(base64Audio.length / CHUNK_SIZE)}`
-        );
-
         for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
           try {
-            console.log(
-              `📤 Sending audio (attempt ${attempt + 1}/${MAX_RETRIES})`
-            );
+            const totalChunks = Math.ceil(base64Audio.length / CHUNK_SIZE);
 
-            for (let i = 0; i < base64Audio.length; i += CHUNK_SIZE) {
-              const chunk = base64Audio.slice(i, i + CHUNK_SIZE);
-              const isLast = i + CHUNK_SIZE >= base64Audio.length;
-              const chunkNumber = Math.floor(i / CHUNK_SIZE) + 1;
+            for (let i = 0; i < totalChunks; i++) {
+              const start = i * CHUNK_SIZE;
+              const chunk = base64Audio.slice(start, start + CHUNK_SIZE);
+              // FIX: isLast is true ONLY on the very last chunk index
+              const isLast = i === totalChunks - 1;
 
-              setSendingProgress(
-                Math.round(((i + CHUNK_SIZE) / base64Audio.length) * 100)
-              );
-
-              console.log(
-                `📤 Chunk ${chunkNumber} - Size: ${chunk.length}, IsLast: ${isLast}`
-              );
+              setSendingProgress(Math.round(((i + 1) / totalChunks) * 100));
 
               sendMessage({
                 type: "audio",
                 chunk,
-                isLast,
+                isLast, // server reads this to trigger transcription
                 format,
                 userId,
                 chunkSize: chunk.length
               });
 
-              await new Promise((r) => setTimeout(r, 50));
+              // Small delay between chunks to avoid overwhelming the WS buffer
+              if (!isLast) await new Promise((r) => setTimeout(r, 50));
             }
 
-            // ✅ IMPORTANT: Send "done" not "audio_done" to match backend
-            sendMessage({ type: "done", userId });
-            console.log("✅ All audio chunks sent successfully");
+            // No separate "done" message needed — isLast:true is the signal
             return true;
           } catch (err) {
-            console.error(`❌ Attempt ${attempt + 1} failed:`, err);
-
             if (attempt < MAX_RETRIES - 1) {
-              const delayMs = 1000 * Math.pow(2, attempt);
-              await new Promise((r) => setTimeout(r, delayMs));
+              await new Promise((r) =>
+                setTimeout(r, 1000 * Math.pow(2, attempt))
+              );
             }
           }
         }
-
         throw new Error("Failed to send audio after multiple attempts");
       },
       [sendMessage, userId]
@@ -227,21 +430,11 @@ export const ChatInput = forwardRef<RNTextInput, Props>(
           );
           return;
         }
-
-        if (isRecording) {
-          console.warn("Already recording");
-          return;
-        }
-
-        console.log("🎙️ Starting recording...");
+        if (isRecording) return;
         setSendingProgress(0);
-
         await audioRecorder.record();
         setIsRecording(true);
-
-        console.log("✅ Recording started");
       } catch (err) {
-        console.error("❌ Failed to start recording:", err);
         Alert.alert(
           "Recording Error",
           err instanceof Error ? err.message : "Could not start recording."
@@ -251,20 +444,13 @@ export const ChatInput = forwardRef<RNTextInput, Props>(
     }, [audioRecorder, recorderReady, isRecording]);
 
     const stopRecording = useCallback(async () => {
-      if (!isRecording || !userId) {
-        console.warn("Not recording or no userId");
-        return;
-      }
-
+      if (!isRecording || !userId) return;
       try {
-        console.log("⏹️ Stopping recording...");
         await audioRecorder.stop();
         setIsRecording(false);
         setIsProcessing(true);
 
         const uri = audioRecorder.uri;
-        console.log("Recording URI:", uri);
-
         if (!uri) {
           Alert.alert("Error", "Failed to get recording URI.");
           setIsProcessing(false);
@@ -272,8 +458,6 @@ export const ChatInput = forwardRef<RNTextInput, Props>(
         }
 
         const fileInfo = await FileSystem.getInfoAsync(uri);
-        console.log("File info:", fileInfo);
-
         if (!fileInfo.exists) {
           Alert.alert("Error", "Recording file not found.");
           setIsProcessing(false);
@@ -281,7 +465,6 @@ export const ChatInput = forwardRef<RNTextInput, Props>(
         }
 
         if (fileInfo.size < 5000) {
-          console.log("🎧 Recording too short — skipping send.");
           Alert.alert(
             "Recording Too Short",
             "Please record at least 1 second of audio."
@@ -291,31 +474,34 @@ export const ChatInput = forwardRef<RNTextInput, Props>(
           return;
         }
 
+        // FIX 3: Detect actual file extension from the URI so the server
+        // saves the temp file with the right extension for Whisper to accept.
+        const uriExtension = uri.split(".").pop()?.toLowerCase() || "wav";
+        const format = ["m4a", "mp4", "wav", "mp3", "webm", "ogg"].includes(
+          uriExtension
+        )
+          ? uriExtension
+          : "wav";
+
+        console.log(
+          `🎤 Audio URI: ${uri}, detected format: ${format}, size: ${fileInfo.size}`
+        );
+
         const filePath = uri.startsWith("file://")
           ? uri.replace("file://", "")
           : uri;
 
         setIsSendingAudio(true);
-        console.log("🎧 Converting to base64...");
-
         const base64Audio = await FileSystem.readAsStringAsync(filePath, {
           encoding: FileSystem.EncodingType.Base64
         });
 
-        console.log("🎧 Sending audio to server...");
-        await sendAudioWithRetry(base64Audio, "m4a");
+        await sendAudioWithRetry(base64Audio, format);
 
-        // Cleanup
         try {
           await FileSystem.deleteAsync(filePath, { idempotent: true });
-        } catch (cleanupErr) {
-          console.warn("Could not delete temp file:", cleanupErr);
-        }
-
-        // NO ALERT - just silently complete
-        console.log("✅ Audio sent successfully");
+        } catch {}
       } catch (err) {
-        console.error("❌ Failed to stop recording:", err);
         Alert.alert(
           "Recording Error",
           err instanceof Error ? err.message : "Could not process audio."
@@ -328,149 +514,155 @@ export const ChatInput = forwardRef<RNTextInput, Props>(
     }, [audioRecorder, isRecording, userId, sendAudioWithRetry]);
 
     useEffect(() => {
-      if (focusOnMount) {
-        (ref as React.RefObject<RNTextInput>).current?.focus();
-      }
+      if (focusOnMount) (ref as React.RefObject<RNTextInput>).current?.focus();
     }, [focusOnMount, ref]);
 
     useEffect(() => {
-      const showSubscription = Keyboard.addListener("keyboardDidShow", () => {
-        scrollViewRef.current?.scrollToEnd({ animated: true });
-      });
-      const focusSubscription = Keyboard.addListener("keyboardWillShow", () => {
-        scrollViewRef.current?.scrollToEnd({ animated: true });
-      });
+      const show = Keyboard.addListener("keyboardDidShow", () =>
+        scrollViewRef.current?.scrollToEnd({ animated: true })
+      );
+      const will = Keyboard.addListener("keyboardWillShow", () =>
+        scrollViewRef.current?.scrollToEnd({ animated: true })
+      );
       return () => {
-        showSubscription.remove();
-        focusSubscription.remove();
+        show.remove();
+        will.remove();
       };
     }, [scrollViewRef]);
 
+    const isDisabled = loading || isRecording || isSendingAudio || isProcessing;
+
     return (
-      <KeyboardAvoidingView>
-        <View>
-          {/* Recording indicator */}
-          {isRecording && (
-            <View className="mx-6 mb-2 bg-red-50 dark:bg-red-900/20 rounded-lg px-3 py-2 flex-row items-center gap-2">
-              <View className="w-2 h-2 bg-red-500 rounded-full" />
-              <RNTextInput
-                editable={false}
-                className="text-red-600 dark:text-red-400 text-sm font-semibold"
-              >
-                🎙️ Recording... {formatDuration(recordingDuration)}
-              </RNTextInput>
-            </View>
-          )}
-
-          {/* Processing indicator */}
-          {isProcessing && !isSendingAudio && (
-            <View className="mx-6 mb-2 bg-blue-50 dark:bg-blue-900/20 rounded-lg px-3 py-2 flex-row items-center gap-2">
-              <ActivityIndicator size="small" color="#3b82f6" />
-              <RNTextInput
-                editable={false}
-                className="text-blue-600 dark:text-blue-400 text-sm font-semibold"
-              >
-                Processing audio...
-              </RNTextInput>
-            </View>
-          )}
-
-          {/* Upload progress */}
-          {isSendingAudio && (
-            <View className="mx-6 mb-2">
-              <View className="bg-gray-200 dark:bg-gray-700 rounded-full h-1.5 overflow-hidden">
-                <View
-                  className="bg-indigo-600 h-full"
-                  style={{ width: `${sendingProgress}%` }}
-                />
-              </View>
-              <RNTextInput
-                editable={false}
-                className="text-gray-600 dark:text-gray-400 text-xs mt-1 text-center"
-              >
-                Uploading... {sendingProgress}%
-              </RNTextInput>
-            </View>
-          )}
-
-          <View className="flex-row items-end gap-2 px-6">
-            <View className="flex-1 flex-row items-end bg-gray-100 dark:bg-gray-200 rounded-2xl px-4 py-3">
-              <RNTextInput
-                ref={ref}
-                placeholder="Message"
-                value={input}
-                onChangeText={onChangeText}
-                multiline
-                editable={!isRecording && !isSendingAudio}
-                className="flex-1 text-base text-black dark:text-black placeholder-gray-400"
-                placeholderTextColor="#D1D5DB"
-              />
-
-              {/* Mic Button - Inside Input Box */}
-              <Pressable
-                onPress={isRecording ? stopRecording : startRecording}
-                disabled={!recorderReady || isSendingAudio || isProcessing}
-                className="ml-2"
-              >
-                {!recorderReady ? (
-                  <ActivityIndicator size="small" color="#6366f1" />
-                ) : (
-                  <>
-                    {isRecording ? (
-                      <StopCircle
-                        size={20}
-                        color="#ef4444"
-                        strokeWidth={2}
-                        opacity={
-                          !recorderReady || isSendingAudio || isProcessing
-                            ? 0.5
-                            : 1
-                        }
-                      />
-                    ) : (
-                      <Mic
-                        size={20}
-                        color="black"
-                        strokeWidth={2}
-                        opacity={
-                          !recorderReady || isSendingAudio || isProcessing
-                            ? 0.5
-                            : 1
-                        }
-                      />
-                    )}
-                  </>
-                )}
-              </Pressable>
-            </View>
-
-            {/* Send Button */}
-            <Pressable
-              onPress={() => {
-                onSubmit();
-                Keyboard.dismiss();
+      <View style={{ paddingBottom: Platform.OS === "ios" ? 0 : bottom }}>
+        {/* Recording indicator */}
+        {isRecording && (
+          <View
+            style={{
+              marginHorizontal: 16,
+              marginBottom: 8,
+              backgroundColor: T.redSoft,
+              borderWidth: 1,
+              borderColor: T.redBorder,
+              borderRadius: 12,
+              paddingHorizontal: 14,
+              paddingVertical: 8,
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 8
+            }}
+          >
+            <View
+              style={{
+                width: 6,
+                height: 6,
+                borderRadius: 3,
+                backgroundColor: T.red
               }}
-              disabled={
-                loading || isRecording || isSendingAudio || isProcessing
-              }
-            >
-              <View
-                className={`border bg-black-1 rounded-full p-2 ${
-                  loading || isRecording || isSendingAudio || isProcessing
-                    ? "opacity-50"
-                    : ""
-                }`}
-              >
-                {loading ? (
-                  <ActivityIndicator size="small" color="#fff" />
-                ) : (
-                  <ArrowUp size={24} color="#fff" />
-                )}
-              </View>
-            </Pressable>
+            />
+            <Text style={{ color: T.red, fontSize: 13, fontWeight: "600" }}>
+              🎙 Recording {formatDuration(recordingDuration)}
+            </Text>
           </View>
+        )}
+
+        {/* Processing indicator */}
+        {isProcessing && !isSendingAudio && (
+          <View
+            style={{
+              marginHorizontal: 16,
+              marginBottom: 8,
+              backgroundColor: T.accentSoft,
+              borderWidth: 1,
+              borderColor: T.accentBorder,
+              borderRadius: 12,
+              paddingHorizontal: 14,
+              paddingVertical: 8,
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 8
+            }}
+          >
+            <ActivityIndicator size="small" color={T.accent} />
+            <Text style={{ color: T.accent, fontSize: 13, fontWeight: "500" }}>
+              Processing audio...
+            </Text>
+          </View>
+        )}
+
+        {/* Upload progress */}
+        {isSendingAudio && <UploadProgress progress={sendingProgress} />}
+
+        {/* Input row */}
+        <View
+          style={{
+            flexDirection: "row",
+            alignItems: "flex-end",
+            gap: 10,
+            paddingHorizontal: 16
+          }}
+        >
+          {/* Text box */}
+          <View
+            style={{
+              flex: 1,
+              flexDirection: "row",
+              alignItems: "flex-end",
+              backgroundColor: T.inputBg,
+              borderRadius: 22,
+              borderWidth: 1.5,
+              borderColor: isRecording
+                ? T.redBorder
+                : isFocused
+                  ? T.accentFocus
+                  : T.accentBorder,
+              paddingHorizontal: 16,
+              paddingVertical: 10,
+              gap: 10,
+              shadowColor: isRecording ? T.red : T.accentGlow,
+              shadowOffset: { width: 0, height: 0 },
+              shadowOpacity: isFocused || isRecording ? 0.25 : 0.06,
+              shadowRadius: isFocused ? 10 : 4,
+              elevation: isFocused ? 2 : 1
+            }}
+          >
+            <RNTextInput
+              ref={ref}
+              placeholder="Ask Velora..."
+              placeholderTextColor="#9ca3af"
+              value={input}
+              onChangeText={onChangeText}
+              onFocus={() => setIsFocused(true)}
+              onBlur={() => setIsFocused(false)}
+              multiline
+              editable={!isRecording && !isSendingAudio}
+              style={{
+                flex: 1,
+                fontSize: 15,
+                color: "#111827",
+                maxHeight: 120,
+                fontFamily: Platform.OS === "ios" ? "System" : "sans-serif"
+              }}
+            />
+
+            <GlowMicButton
+              isRecording={isRecording}
+              disabled={isSendingAudio || isProcessing}
+              onPress={isRecording ? stopRecording : startRecording}
+              recorderReady={recorderReady}
+            />
+          </View>
+
+          {/* Send */}
+          <SendButton
+            loading={loading}
+            disabled={isDisabled || !input.trim()}
+            onPress={() => {
+              onSubmit();
+              Keyboard.dismiss();
+            }}
+          />
         </View>
-      </KeyboardAvoidingView>
+      </View>
     );
   }
 );

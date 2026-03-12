@@ -13,9 +13,6 @@ import {
   OAuthProvider
 } from "react-native-appwrite";
 import { openAuthSessionAsync } from "expo-web-browser";
-
-import * as Linking from "expo-linking";
-
 import { TransactionType } from "@/types";
 import { Wallet } from "@/types";
 
@@ -156,7 +153,6 @@ export const loginWithEmail = async ({
     const session = await account.createEmailPasswordSession(email, password);
     return session;
   } catch (error) {
-    console.error("Login error:", error);
     throw error;
   }
 };
@@ -338,6 +334,42 @@ export const updateName = async ({
   }
 };
 
+export const updateEmail = async ({
+  userId,
+  newEmail,
+  password
+}: {
+  userId: string;
+  newEmail: string;
+  password: string;
+}) => {
+  try {
+    const currentUser = await getCurrentUser();
+    if (currentUser?.$id !== userId) {
+      throw new Error("Unauthorized: Cannot update another user's email");
+    }
+
+    // Appwrite requires current password to update email
+    await account.updateEmail(newEmail, password);
+
+    // Update email in user document too
+    const updatedDoc = await databases.updateDocument(
+      config.databaseId,
+      config.userCollectionId,
+      userId,
+      { email: newEmail }
+    );
+
+    return { success: true, user: updatedDoc };
+  } catch (error: any) {
+    console.error("Failed to update email:", error);
+    return {
+      success: false,
+      msg: error?.message || "Failed to update email"
+    };
+  }
+};
+
 export const uploadWalletIcon = async (
   file: {
     name: string;
@@ -403,10 +435,19 @@ export const createUpdateWallet = async ({
       const existingWallets = await databases.listDocuments(
         config.databaseId,
         config.userWalletId,
-        [Query.equal("userId", userId), Query.equal("name", name)]
+        [Query.equal("userId", userId)] // ← fetch ALL user wallets
       );
 
-      if (existingWallets.total > 0) {
+      if (existingWallets.total >= 10) {
+        throw new Error(
+          "Wallet limit reached. You can have a maximum of 10 wallets."
+        );
+      }
+
+      const duplicate = existingWallets.documents.find(
+        (w) => w.name.toLowerCase() === name.toLowerCase()
+      );
+      if (duplicate) {
         throw new Error("A wallet with this name already exists.");
       }
 
@@ -431,8 +472,7 @@ export const createUpdateWallet = async ({
       return wallet;
     }
   } catch (error) {
-    console.error("Wallet creation/update failed:", error);
-    return null;
+    throw error;
   }
 };
 

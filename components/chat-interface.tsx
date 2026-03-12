@@ -1,4 +1,4 @@
-import { View, Text, ScrollView } from "react-native";
+import { View, Text, ScrollView, Platform } from "react-native";
 import React, { useCallback } from "react";
 import AIResponseMessage from "@/components/AIResponseMessage";
 
@@ -8,16 +8,16 @@ interface Message {
   content: string;
   visualization?: {
     type: string;
-    chartType: "bar" | "line";
-    data: any[];
-    title: string;
-    xAxis: string;
-    yAxis: string;
-    series: Array<{
-      name: string;
-      color: string;
-      key: string;
-    }>;
+    chartType?: "bar" | "line";
+    data?: any[];
+    title?: string;
+    xAxis?: string;
+    yAxis?: string;
+    series?: Array<{ name: string; color: string; key: string }>;
+    transactions?: any[];
+    charts?: any[];
+    anomalies?: any[];
+    insights?: any[];
   };
 }
 
@@ -26,55 +26,123 @@ interface ChatInterfaceProps {
   scrollViewRef?: React.RefObject<ScrollView>;
 }
 
+// ─── Theme (matches AICharacter + AIAvatarHeader) ─────────────────────────────
+const T = {
+  accent: "#4fc3f7",
+  accentDark: "#0ea5c9",
+  accentSoft: "rgba(79,195,247,0.08)",
+  accentBorder: "rgba(79,195,247,0.22)",
+  accentGlow: "#4fc3f7",
+  // User bubble: solid cyan
+  userBubbleBg: "#4fc3f7",
+  userText: "#ffffff",
+  // AI bubble: soft tinted on white
+  aiBubbleBg: "rgba(79,195,247,0.07)",
+  aiBubbleBorder: "rgba(79,195,247,0.20)",
+  aiText: "#111827"
+};
+
+// ─── Small ✦ accent replacing robot icon ─────────────────────────────────────
+const AIAccent = () => (
+  <View
+    style={{
+      width: 22,
+      height: 22,
+      borderRadius: 11,
+      backgroundColor: T.accentSoft,
+      borderWidth: 1,
+      borderColor: T.accentBorder,
+      alignItems: "center",
+      justifyContent: "center",
+      marginRight: 8,
+      marginTop: 2,
+      shadowColor: T.accentGlow,
+      shadowOffset: { width: 0, height: 0 },
+      shadowOpacity: 0.35,
+      shadowRadius: 5,
+      elevation: 2
+    }}
+  >
+    <Text style={{ fontSize: 9, color: T.accent }}>✦</Text>
+  </View>
+);
+
 const ChatInterface: React.FC<ChatInterfaceProps> = ({
   messages,
   scrollViewRef
 }) => {
-  // Memoize message rendering to prevent unnecessary re-renders
   const renderMessage = useCallback((msg: Message) => {
-    // If message has visualization, use AIResponseMessage component
-    if (msg.role === "assistant" && msg.visualization) {
+    const isUser = msg.role === "user";
+
+    // Assistant message with chart
+    if (!isUser && msg.visualization) {
       return (
-        <View key={msg.id} className="flex-row my-2 items-start justify-start">
-          {/* Bot Avatar */}
-          <View className="w-8 h-8 bg-gray-200 rounded-full items-center justify-center mr-2 mt-1">
-            <Text>🤖</Text>
-          </View>
-          {/* Message with Chart */}
-          <View className="flex-1">
+        <View
+          key={msg.id}
+          style={{
+            flexDirection: "row",
+            marginVertical: 6,
+            alignItems: "flex-start",
+            justifyContent: "flex-start"
+          }}
+        >
+          <AIAccent />
+          <View style={{ flex: 1 }}>
             <AIResponseMessage
-              message={{
-                text: msg.content,
-                visualization: msg.visualization
-              }}
+              message={{ text: msg.content, visualization: msg.visualization }}
             />
           </View>
         </View>
       );
     }
 
-    // Regular text-only message
+    // Regular text messages
     return (
       <View
         key={msg.id}
-        className={`flex-row my-2 items-center ${
-          msg.role === "user" ? "justify-end" : "justify-start"
-        }`}
+        style={{
+          flexDirection: "row",
+          marginVertical: 5,
+          alignItems: "flex-end",
+          justifyContent: isUser ? "flex-end" : "flex-start"
+        }}
       >
-        {/* Bot Avatar for text responses */}
-        {msg.role === "assistant" && (
-          <View className="w-8 h-8 bg-gray-200 rounded-full items-center justify-center mr-2">
-            <Text>🤖</Text>
-          </View>
-        )}
+        {/* AI accent — left side only */}
+        {!isUser && <AIAccent />}
 
-        {/* Message Bubble */}
+        {/* Bubble */}
         <View
-          className={`p-3 rounded-2xl max-w-[75%] ${
-            msg.role === "user" ? "bg-gray-900" : "bg-white"
-          }`}
+          style={{
+            maxWidth: "75%",
+            paddingHorizontal: 14,
+            paddingVertical: 10,
+            // Tail: sharp top-right for user, sharp top-left for AI
+            borderRadius: 20,
+            borderTopRightRadius: isUser ? 4 : 20,
+            borderTopLeftRadius: isUser ? 20 : 4,
+            borderBottomLeftRadius: 20,
+            borderBottomRightRadius: 20,
+
+            backgroundColor: isUser ? T.userBubbleBg : T.aiBubbleBg,
+            borderWidth: isUser ? 0 : 1,
+            borderColor: isUser ? "transparent" : T.aiBubbleBorder,
+
+            // Cyan glow on user bubble
+            shadowColor: isUser ? T.accentGlow : T.accentGlow,
+            shadowOffset: { width: 0, height: 2 },
+            shadowOpacity: isUser ? 0.25 : 0.08,
+            shadowRadius: isUser ? 8 : 4,
+            elevation: isUser ? 3 : 1
+          }}
         >
-          <Text className={msg.role === "user" ? "text-white" : "text-black"}>
+          <Text
+            style={{
+              fontSize: 15,
+              lineHeight: 22,
+              color: isUser ? T.userText : T.aiText,
+              fontFamily: Platform.OS === "ios" ? "System" : "sans-serif"
+            }}
+          >
             {msg.content}
           </Text>
         </View>
@@ -85,11 +153,12 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   return (
     <ScrollView
       ref={scrollViewRef}
-      className="flex-1"
+      style={{ flex: 1 }}
       showsVerticalScrollIndicator={false}
       scrollEventThrottle={16}
+      contentContainerStyle={{ padding: 16, paddingBottom: 8 }}
     >
-      <View className="p-4 space-y-2">{messages.map(renderMessage)}</View>
+      {messages.map(renderMessage)}
     </ScrollView>
   );
 };

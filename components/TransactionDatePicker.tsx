@@ -48,9 +48,10 @@ const TransactionDatePicker = ({ transaction, setTransaction }) => {
           <DateTimePicker
             value={transaction?.date ? new Date(transaction.date) : new Date()}
             mode="date"
-            display="spinner"
+            display={Platform.OS === "ios" ? "spinner" : "default"}
             onChange={onChange}
             style={{ width: 320, alignSelf: "center" }}
+            textColor={Platform.OS === "ios" ? "black" : undefined}
           />
           <Pressable
             onPress={() => setShowPicker(false)}

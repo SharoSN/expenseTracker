@@ -4,31 +4,31 @@ import {
   ScrollView,
   ActivityIndicator,
   RefreshControl,
-  TouchableOpacity
+  TouchableOpacity,
+  Dimensions
 } from "react-native";
-import React, { useMemo, useState, useCallback } from "react";
+import React, { useMemo, useState, useCallback, useRef } from "react";
 import { SafeAreaView } from "react-native";
 import HeaderBox from "@/components/HeaderBox";
-import SegmentedControl from "@react-native-segmented-control/segmented-control";
 import { BarChart } from "react-native-gifted-charts";
 import dayjs from "dayjs";
 import isoWeek from "dayjs/plugin/isoWeek";
-import weekday from "dayjs/plugin/weekday";
-import weekOfYear from "dayjs/plugin/weekOfYear";
+import isSameOrAfter from "dayjs/plugin/isSameOrAfter";
 import { TransactionsList } from "@/components/TransactionsList";
 import { useTransactionData } from "@/hooks/userTransactionData";
 import { formatCurrency, useWalletStore } from "@/lib/walletStore";
 
 dayjs.extend(isoWeek);
-dayjs.extend(weekday);
-dayjs.extend(weekOfYear);
+dayjs.extend(isSameOrAfter);
 
-const chooseStepValue = (maxValue) => {
+const SCREEN_WIDTH = Dimensions.get("window").width;
+
+const chooseStepValue = (maxValue: number) => {
   const roughStep = maxValue / 4;
+  if (roughStep <= 0) return 25;
   const magnitude = Math.pow(10, Math.floor(Math.log10(roughStep)));
-  const multiples = [1, 2, 5, 10];
-  for (let i = 0; i < multiples.length; i++) {
-    const step = multiples[i] * magnitude;
+  for (const m of [1, 2, 5, 10]) {
+    const step = m * magnitude;
     if (step >= roughStep) return step;
   }
   return magnitude * 10;
@@ -37,9 +37,15 @@ const chooseStepValue = (maxValue) => {
 const Statistics = () => {
   const [activeIndex, setActiveIndex] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
-  const [selectedYear, setSelectedYear] = useState(dayjs().year());
-  const currency = useWalletStore((state) => state.currency);
+  const [chartScrollX, setChartScrollX] = useState(0);
 
+  const chartScrollRef = useRef<ScrollView>(null);
+
+  // ONE source of truth — all three views respect these
+  const [selectedYear, setSelectedYear] = useState(dayjs().year());
+  const [selectedMonth, setSelectedMonth] = useState(dayjs().month()); // 0-based
+
+  const currency = useWalletStore((state) => state.currency);
   const { data: transactions = [], isLoading, refetch } = useTransactionData();
 
   const onRefresh = useCallback(async () => {
@@ -48,198 +54,129 @@ const Statistics = () => {
     setRefreshing(false);
   }, [refetch]);
 
-  // Reset year when switching away from yearly view
-  const handleSegmentChange = (e) => {
-    setActiveIndex(e.nativeEvent.selectedSegmentIndex);
+  // ── Chart scroll buttons ───────────────────────────────────────────────────
+  const scrollChart = (direction: "left" | "right") => {
+    const amount = 150;
+    const newX =
+      direction === "right"
+        ? chartScrollX + amount
+        : Math.max(0, chartScrollX - amount);
+    chartScrollRef.current?.scrollTo({ x: newX, animated: true });
   };
 
-  // Get available years from transactions
-  const availableYears = useMemo(() => {
-    const years = new Set(transactions.map((tx) => dayjs(tx.date).year()));
-    return Array.from(years).sort((a, b) => b - a);
-  }, [transactions]);
+  // ── Navigation ─────────────────────────────────────────────────────────────
+  const canGoNextYear = selectedYear < dayjs().year();
+  const canGoNextMonth = !(
+    selectedYear === dayjs().year() && selectedMonth === dayjs().month()
+  );
 
-  // Determine which year to use for data grouping
-  const displayYear = activeIndex === 2 ? selectedYear : dayjs().year();
+  const goToPrevYear = () => setSelectedYear((y) => y - 1);
+  const goToNextYear = () => {
+    if (canGoNextYear) setSelectedYear((y) => y + 1);
+  };
 
-  // -----------------------------
-  // Group transactions
-  // -----------------------------
-  const groupTransactions = useCallback((transactions, type, year) => {
-    if (type === "weekly") {
-      const grouped = {};
-      transactions.forEach((tx) => {
-        const date = dayjs(tx.date);
-        const txYear = date.year();
-        const week = date.week();
-        const key = `${txYear}-W${week}`;
+  const goToPrevMonth = () => {
+    if (selectedMonth === 0) {
+      setSelectedMonth(11);
+      setSelectedYear((y) => y - 1);
+    } else setSelectedMonth((m) => m - 1);
+  };
+  const goToNextMonth = () => {
+    if (!canGoNextMonth) return;
+    if (selectedMonth === 11) {
+      setSelectedMonth(0);
+      setSelectedYear((y) => y + 1);
+    } else setSelectedMonth((m) => m + 1);
+  };
 
-        if (!grouped[key]) {
-          grouped[key] = {
-            income: Array(7).fill(0),
-            expense: Array(7).fill(0),
-            label: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-          };
-        }
+  // ── Filter: all 3 views respect the selected period ───────────────────────
+  const filteredTransactions = useMemo(() => {
+    if (activeIndex === 2) {
+      return transactions.filter(
+        (tx) => dayjs(tx.date).year() === selectedYear
+      );
+    }
+    return transactions.filter((tx) => {
+      const d = dayjs(tx.date);
+      return d.year() === selectedYear && d.month() === selectedMonth;
+    });
+  }, [transactions, activeIndex, selectedYear, selectedMonth]);
 
-        const dayIndex = date.weekday();
-        const adjustedDayIndex = dayIndex === 0 ? 6 : dayIndex - 1;
-
-        if (tx.type === "income")
-          grouped[key].income[adjustedDayIndex] += tx.amount;
-        else grouped[key].expense[adjustedDayIndex] += tx.amount;
+  // ── Group for chart ────────────────────────────────────────────────────────
+  const groupedBarData = useMemo(() => {
+    if (activeIndex === 0) {
+      const inc = Array(7).fill(0);
+      const exp = Array(7).fill(0);
+      filteredTransactions.forEach((tx) => {
+        const i = dayjs(tx.date).isoWeekday() - 1; // 0=Mon, 6=Sun
+        if (tx.type === "income") inc[i] += tx.amount;
+        else exp[i] += tx.amount;
       });
+      return ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map(
+        (label, i) => ({ label, income: inc[i], expense: exp[i] })
+      );
+    }
 
-      const merged = {
-        income: Array(7).fill(0),
-        expense: Array(7).fill(0),
-        label: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-      };
-
-      Object.values(grouped).forEach((week) => {
-        for (let i = 0; i < 7; i++) {
-          merged.income[i] += week.income[i];
-          merged.expense[i] += week.expense[i];
-        }
+    if (activeIndex === 1) {
+      const ref = dayjs(
+        `${selectedYear}-${String(selectedMonth + 1).padStart(2, "0")}-01`
+      );
+      const days = ref.daysInMonth();
+      const grouped: Record<number, { income: number; expense: number }> = {};
+      filteredTransactions.forEach((tx) => {
+        const day = dayjs(tx.date).date();
+        if (!grouped[day]) grouped[day] = { income: 0, expense: 0 };
+        if (tx.type === "income") grouped[day].income += tx.amount;
+        else grouped[day].expense += tx.amount;
       });
-
-      return merged.label.map((day, i) => ({
-        label: day,
-        income: merged.income[i],
-        expense: merged.expense[i]
+      return Array.from({ length: days }, (_, i) => ({
+        label: String(i + 1),
+        income: grouped[i + 1]?.income ?? 0,
+        expense: grouped[i + 1]?.expense ?? 0
       }));
     }
 
-    if (type === "monthly") {
-      const currentMonth = dayjs().month();
-      const currentYear = dayjs().year();
-      const grouped = {};
+    // Yearly
+    const grouped: Record<number, { income: number; expense: number }> = {};
+    filteredTransactions.forEach((tx) => {
+      const m = dayjs(tx.date).month();
+      if (!grouped[m]) grouped[m] = { income: 0, expense: 0 };
+      if (tx.type === "income") grouped[m].income += tx.amount;
+      else grouped[m].expense += tx.amount;
+    });
+    return Array.from({ length: 12 }, (_, m) => ({
+      label: dayjs(
+        `${selectedYear}-${String(m + 1).padStart(2, "0")}-01`
+      ).format("MMM"),
+      income: grouped[m]?.income ?? 0,
+      expense: grouped[m]?.expense ?? 0
+    }));
+  }, [filteredTransactions, activeIndex, selectedYear, selectedMonth]);
 
-      transactions.forEach((tx) => {
-        const date = dayjs(tx.date);
-        if (date.month() === currentMonth && date.year() === currentYear) {
-          const day = date.date();
-          if (!grouped[day])
-            grouped[day] = { income: 0, expense: 0, label: day.toString() };
-          if (tx.type === "income") grouped[day].income += tx.amount;
-          else grouped[day].expense += tx.amount;
-        }
-      });
-
-      const daysInMonth = dayjs().daysInMonth();
-      const result = [];
-      for (let day = 1; day <= daysInMonth; day++) {
-        result.push(
-          grouped[day] || { income: 0, expense: 0, label: day.toString() }
-        );
-      }
-      return result;
-    }
-
-    if (type === "yearly") {
-      const grouped = {};
-
-      transactions.forEach((tx) => {
-        const date = dayjs(tx.date);
-        if (date.year() === year) {
-          const month = date.month();
-          if (!grouped[month])
-            grouped[month] = {
-              income: 0,
-              expense: 0,
-              label: date.format("MMM")
-            };
-          if (tx.type === "income") grouped[month].income += tx.amount;
-          else grouped[month].expense += tx.amount;
-        }
-      });
-
-      const result = [];
-      for (let m = 0; m < 12; m++) {
-        result.push(
-          grouped[m] || {
-            income: 0,
-            expense: 0,
-            label: dayjs().month(m).format("MMM")
-          }
-        );
-      }
-      return result;
-    }
-
-    return [];
-  }, []);
-
-  const groupedBarData = useMemo(() => {
-    const type =
-      activeIndex === 0 ? "weekly" : activeIndex === 1 ? "monthly" : "yearly";
-    return groupTransactions(transactions, type, displayYear);
-  }, [transactions, activeIndex, displayYear, groupTransactions]);
-
-  // Summary for displayed period
+  // ── Summary ────────────────────────────────────────────────────────────────
   const summary = useMemo(() => {
-    let filtered = transactions;
-
-    if (activeIndex === 0) {
-      const now = dayjs();
-      filtered = transactions.filter((tx) =>
-        dayjs(tx.date).isAfter(now.startOf("week"))
-      );
-    } else if (activeIndex === 1) {
-      const now = dayjs();
-      filtered = transactions.filter((tx) =>
-        dayjs(tx.date).isAfter(now.startOf("month"))
-      );
-    } else {
-      filtered = transactions.filter(
-        (tx) => dayjs(tx.date).year() === displayYear
-      );
-    }
-
-    const totalIncome = filtered
+    const totalIncome = filteredTransactions
       .filter((t) => t.type === "income")
-      .reduce((sum, t) => sum + t.amount, 0);
-    const totalExpense = filtered
+      .reduce((s, t) => s + t.amount, 0);
+    const totalExpense = filteredTransactions
       .filter((t) => t.type === "expense")
-      .reduce((sum, t) => sum + t.amount, 0);
+      .reduce((s, t) => s + t.amount, 0);
     return { totalIncome, totalExpense, net: totalIncome - totalExpense };
-  }, [transactions, activeIndex, displayYear]);
+  }, [filteredTransactions]);
 
+  // ── Chart config ───────────────────────────────────────────────────────────
   const chartData = useMemo(
     () =>
       groupedBarData.flatMap((d) => [
-        {
-          value: d.income,
-          label: d.label,
-          frontColor: "#22c55e",
-          spacing: 4
-        },
-        {
-          value: d.expense,
-          label: "",
-          frontColor: "#ef4444"
-        }
+        { value: d.income, label: d.label, frontColor: "#22c55e", spacing: 4 },
+        { value: d.expense, label: "", frontColor: "#ef4444" }
       ]),
     [groupedBarData]
   );
 
-  const getFilteredTransactions = () => {
-    const now = dayjs();
-    if (activeIndex === 0)
-      return transactions.filter((tx) =>
-        dayjs(tx.date).isAfter(now.startOf("week"))
-      );
-    if (activeIndex === 1)
-      return transactions.filter((tx) =>
-        dayjs(tx.date).isAfter(now.startOf("month"))
-      );
-    return transactions.filter((tx) => dayjs(tx.date).year() === displayYear);
-  };
-
-  const formatYAxisLabel = (v) => {
-    if (v >= 1_000_000)
-      return `${v / 1_000_000 > 0 ? (v / 1_000_000).toFixed(1) : 0}M`;
-    if (v >= 1_000) return `${v / 1_000 > 0 ? (v / 1_000).toFixed(1) : 0}k`;
+  const formatY = (v: number) => {
+    if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
+    if (v >= 1_000) return `${(v / 1_000).toFixed(1)}k`;
     return `${v}`;
   };
 
@@ -247,13 +184,30 @@ const Statistics = () => {
     ...groupedBarData.flatMap((d) => [d.income, d.expense]),
     100
   );
-  const paddedMax = rawMax * 1.2;
-  const stepValue = chooseStepValue(paddedMax);
+  const stepValue = chooseStepValue(rawMax * 1.2);
   const noOfSections = 4;
   const roundedMaxValue = stepValue * noOfSections;
   const yAxisLabelTexts = Array.from({ length: noOfSections + 1 }, (_, i) =>
-    formatYAxisLabel(stepValue * i)
+    formatY(stepValue * i)
   );
+
+  const yAxisWidth = 55;
+  const slotWidth = Math.floor(
+    (SCREEN_WIDTH - 48 - yAxisWidth) / groupedBarData.length
+  );
+  const barWidth = Math.max(6, Math.floor(slotWidth * 0.35));
+  const pairSpacing = Math.max(2, slotWidth - barWidth * 2 - 4);
+
+  const periodLabel =
+    activeIndex === 2
+      ? `${selectedYear}`
+      : dayjs(
+          `${selectedYear}-${String(selectedMonth + 1).padStart(2, "0")}-01`
+        ).format("MMMM YYYY");
+
+  const nextDisabled = activeIndex === 2 ? !canGoNextYear : !canGoNextMonth;
+  const onPrev = activeIndex === 2 ? goToPrevYear : goToPrevMonth;
+  const onNext = activeIndex === 2 ? goToNextYear : goToNextMonth;
 
   if (isLoading) {
     return (
@@ -278,7 +232,7 @@ const Statistics = () => {
           subtext="Overview of your income & expenses"
         />
 
-        {/* ------------------- Summary Cards ------------------- */}
+        {/* Summary Cards */}
         <View className="flex-row justify-between mt-4 mb-4">
           <View className="flex-1 bg-green-100 p-4 rounded-xl mr-2">
             <Text className="text-green-700 font-bold">Income</Text>
@@ -300,6 +254,7 @@ const Statistics = () => {
           </View>
         </View>
 
+        {/* Tab Switcher */}
         <View
           style={{
             flexDirection: "row",
@@ -312,7 +267,12 @@ const Statistics = () => {
           {["Weekly", "Monthly", "Yearly"].map((label, index) => (
             <TouchableOpacity
               key={label}
-              onPress={() => setActiveIndex(index)}
+              onPress={() => {
+                setActiveIndex(index);
+                // Reset chart scroll when switching tabs
+                setChartScrollX(0);
+                chartScrollRef.current?.scrollTo({ x: 0, animated: false });
+              }}
               style={{
                 flex: 1,
                 paddingVertical: 9,
@@ -320,10 +280,6 @@ const Statistics = () => {
                 borderRadius: 10,
                 backgroundColor:
                   activeIndex === index ? "#ffffff" : "transparent",
-                shadowColor: activeIndex === index ? "#0ea5e9" : "transparent",
-                shadowOffset: { width: 0, height: 1 },
-                shadowOpacity: 0.15,
-                shadowRadius: 4,
                 elevation: activeIndex === index ? 2 : 0
               }}
             >
@@ -331,8 +287,7 @@ const Statistics = () => {
                 style={{
                   fontSize: 13,
                   fontWeight: activeIndex === index ? "700" : "500",
-                  color: activeIndex === index ? "#0ea5e9" : "#94a3b8",
-                  letterSpacing: 0.2
+                  color: activeIndex === index ? "#0ea5e9" : "#94a3b8"
                 }}
               >
                 {label}
@@ -341,82 +296,96 @@ const Statistics = () => {
           ))}
         </View>
 
-        {/* Year Navigation - Only show when yearly view is selected */}
-        {activeIndex === 2 && availableYears.length > 0 && (
-          <View className="flex-row justify-between items-center mt-4 mb-4">
+        {/* Period Navigator */}
+        <View className="flex-row justify-between items-center mt-4 mb-4">
+          <TouchableOpacity onPress={onPrev}>
+            <Text className="text-lg font-semibold text-blue-600">
+              ← Previous
+            </Text>
+          </TouchableOpacity>
+          <Text className="text-xl font-bold text-gray-800">{periodLabel}</Text>
+          <TouchableOpacity onPress={onNext} disabled={nextDisabled}>
+            <Text
+              className={`text-lg font-semibold ${
+                nextDisabled ? "text-gray-300" : "text-blue-600"
+              }`}
+            >
+              Next →
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Chart scroll buttons — only on Monthly */}
+        {activeIndex === 1 && (
+          <View className="flex-row justify-end gap-3 mb-2">
             <TouchableOpacity
-              onPress={() =>
-                setSelectedYear((prev) => {
-                  const idx = availableYears.indexOf(prev);
-                  return idx > 0 ? availableYears[idx - 1] : prev;
-                })
-              }
-              disabled={selectedYear === Math.max(...availableYears)}
+              onPress={() => scrollChart("left")}
+              style={{
+                backgroundColor: "#f1f5f9",
+                paddingHorizontal: 16,
+                paddingVertical: 6,
+                borderRadius: 10
+              }}
             >
               <Text
-                className={`text-lg font-semibold ${
-                  selectedYear === Math.max(...availableYears)
-                    ? "text-gray-300"
-                    : "text-blue-600"
-                }`}
+                style={{ fontSize: 18, color: "#374151", fontWeight: "700" }}
               >
-                ← Previous
+                ‹
               </Text>
             </TouchableOpacity>
-
-            <Text className="text-2xl font-bold text-gray-800">
-              {selectedYear}
-            </Text>
-
             <TouchableOpacity
-              onPress={() =>
-                setSelectedYear((prev) => {
-                  const idx = availableYears.indexOf(prev);
-                  return idx < availableYears.length - 1
-                    ? availableYears[idx + 1]
-                    : prev;
-                })
-              }
-              disabled={selectedYear === Math.min(...availableYears)}
+              onPress={() => scrollChart("right")}
+              style={{
+                backgroundColor: "#f1f5f9",
+                paddingHorizontal: 16,
+                paddingVertical: 6,
+                borderRadius: 10
+              }}
             >
               <Text
-                className={`text-lg font-semibold ${
-                  selectedYear === Math.min(...availableYears)
-                    ? "text-gray-300"
-                    : "text-blue-600"
-                }`}
+                style={{ fontSize: 18, color: "#374151", fontWeight: "700" }}
               >
-                Next →
+                ›
               </Text>
             </TouchableOpacity>
           </View>
         )}
 
-        <View className="relative flex justify-center items-center mt-6">
-          <BarChart
-            data={chartData}
-            barWidth={14}
-            barBorderRadius={6}
-            labelWidth={30}
-            spacing={22}
-            initialSpacing={25}
-            noOfSections={noOfSections}
-            stepValue={stepValue}
-            maxValue={roundedMaxValue}
-            isAnimated
-            hideRules
-            yAxisThickness={0}
-            xAxisThickness={0}
-            yAxisLabelWidth={55}
-            yAxisLabelTexts={yAxisLabelTexts}
-            yAxisColor="#e5e7eb"
-            xAxisColor="#e5e7eb"
-            yAxisTextStyle={{ color: "#6b7280" }}
-            xAxisLabelTextStyle={{ color: "#374151", fontSize: 12 }}
-            showYAxisIndices={false}
-            xAxisLength={280}
-          />
-        </View>
+        {/* Chart */}
+        <ScrollView
+          ref={chartScrollRef}
+          horizontal={activeIndex === 1}
+          showsHorizontalScrollIndicator={false}
+          scrollEnabled={activeIndex === 1}
+          onScroll={(e) => setChartScrollX(e.nativeEvent.contentOffset.x)}
+          scrollEventThrottle={16}
+        >
+          <View className="relative flex justify-center items-center mt-2">
+            <BarChart
+              data={chartData}
+              barWidth={barWidth}
+              barBorderRadius={6}
+              labelWidth={activeIndex === 1 ? 18 : 30}
+              spacing={pairSpacing}
+              initialSpacing={15}
+              noOfSections={noOfSections}
+              stepValue={stepValue}
+              maxValue={roundedMaxValue}
+              isAnimated={activeIndex !== 1}
+              hideRules
+              yAxisThickness={0}
+              xAxisThickness={0}
+              yAxisLabelWidth={yAxisWidth}
+              yAxisLabelTexts={yAxisLabelTexts}
+              yAxisTextStyle={{ color: "#6b7280" }}
+              xAxisLabelTextStyle={{
+                color: "#374151",
+                fontSize: activeIndex === 1 ? 9 : 12
+              }}
+              showYAxisIndices={false}
+            />
+          </View>
+        </ScrollView>
 
         {/* Legend */}
         <View className="flex-row justify-center mt-6 gap-6">
@@ -431,8 +400,8 @@ const Statistics = () => {
         </View>
 
         <TransactionsList
-          title="Recent Transactions"
-          data={getFilteredTransactions()}
+          title="Transactions"
+          data={filteredTransactions}
           loading={isLoading}
         />
       </ScrollView>

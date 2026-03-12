@@ -29,14 +29,12 @@ const WalletModal = () => {
   const [walletName, setWalletName] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // Run only once to set initial state
   useEffect(() => {
     console.log("📋 Params received:", params);
 
     if (params?.id) {
       setWalletName(params.name || "");
 
-      // Extract icon index from the image parameter
       const imageParam = params.image as string;
       console.log("🖼️ Image param:", imageParam);
 
@@ -59,14 +57,13 @@ const WalletModal = () => {
   const handleSaveWallet = async () => {
     if (loading) return;
 
-    if (!walletName) {
+    if (!walletName.trim()) {
       alert("Please enter a wallet name.");
       return;
     }
 
     setLoading(true);
     try {
-      // Save the icon index as "icon-0", "icon-1", etc.
       const imageUrl = `icon-${selectedIconIndex}`;
 
       console.log("💾 Saving wallet with:");
@@ -77,25 +74,41 @@ const WalletModal = () => {
 
       const newOrUpdatedWallet = await createUpdateWallet({
         userId: user?.$id,
-        name: walletName,
+        name: walletName.trim(),
         imageUrl,
         walletId: params?.id || undefined
       });
 
-      console.log("✅ Wallet saved:", newOrUpdatedWallet);
-
-      if (!newOrUpdatedWallet) {
-        alert("Failed to save wallet.");
-        setLoading(false);
-        return;
-      }
-
+      // ✅ wallet saved successfully
       alert(params?.id ? "✅ Wallet updated!" : "✅ Wallet created!");
       refetch?.();
       router.back();
     } catch (error: any) {
-      console.error("❌ Error saving wallet:", error?.message, error);
-      alert("An error occurred: " + error?.message);
+      // Map known errors to friendly messages — never show raw Appwrite errors
+      const raw = error?.message || "";
+      let friendlyMessage = "Something went wrong. Please try again.";
+
+      if (
+        raw.includes("already exists") ||
+        raw.includes("already have a wallet named")
+      ) {
+        friendlyMessage = `A wallet named "${walletName.trim()}" already exists. Please choose a different name.`;
+      } else if (
+        raw.includes("limit reached") ||
+        raw.includes("maximum of 10")
+      ) {
+        friendlyMessage =
+          "You've reached the 10 wallet limit. Delete an existing wallet to add a new one.";
+      } else if (raw.includes("Unauthorized")) {
+        friendlyMessage = "You don't have permission to do that.";
+      } else if (
+        raw.includes("empty") ||
+        raw.includes("name cannot be empty")
+      ) {
+        friendlyMessage = "Please enter a wallet name.";
+      }
+
+      alert(friendlyMessage);
     } finally {
       setLoading(false);
     }
@@ -187,7 +200,6 @@ const WalletModal = () => {
                   Select Wallet Icon
                 </Text>
 
-                {/* Debug info */}
                 <Text className="text-sm text-gray-500 mb-2">
                   Currently selected:
                 </Text>

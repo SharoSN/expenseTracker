@@ -30,21 +30,19 @@ const SignIn = () => {
 
   const handleEmailLogin = async () => {
     if (!email || !password) {
-      Alert.alert("Error", "Please enter email and password");
+      Alert.alert("Error", "Please enter your email and password.");
       return;
     }
 
     setIsSubmitting(true);
     try {
       const result = await loginWithEmail({ email, password });
-      console.log("Email login result:", result);
       if (result) {
         await refetch();
         router.replace("/");
       }
-    } catch (error) {
-      console.error("Email login error:", error);
-      Alert.alert("Error", "Failed to login with email");
+    } catch (error: any) {
+      Alert.alert("Login Failed", error.message);
     } finally {
       setIsSubmitting(false);
     }
@@ -55,24 +53,20 @@ const SignIn = () => {
     try {
       const result = await login();
       if (result) {
-        console.log("Google login successful");
-
-        // 🔥 Ensure user document exists and get user data
         const user = await getCurrentUser();
         if (!user) {
-          Alert.alert("Error", "Failed to create or fetch user data");
+          Alert.alert(
+            "Error",
+            "Failed to load your account. Please try again."
+          );
           return;
         }
-
-        // Redirect after successful login
-        await refetch(); // Refresh global context with user data
+        await refetch();
         router.replace("/");
-      } else {
-        Alert.alert("Error", "Failed to login with Google");
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("Google login error:", error);
-      Alert.alert("Error", "Failed to login with Google");
+      Alert.alert("Login Failed", error.message);
     } finally {
       setIsSubmitting(false);
     }
@@ -140,7 +134,7 @@ const SignIn = () => {
 
         <View className="w-full p-4">
           <TouchableOpacity
-            className="border border-gray-500  bg-slate-900 rounded-lg p-3 mt-5 items-center justify-center mb-4"
+            className="border border-gray-500 bg-slate-900 rounded-lg p-3 mt-5 items-center justify-center mb-4"
             onPress={handleEmailLogin}
             disabled={isSubmitting}
           >
@@ -179,8 +173,9 @@ const SignIn = () => {
               </Text>
             </View>
           </TouchableOpacity>
+
           <View className="flex flex-col justify-center items-center">
-            <Text>Don't have an account ?</Text>
+            <Text>Don't have an account?</Text>
             <TouchableOpacity>
               <Link
                 className="w-1/2 p-2 text-slate-900 font-bold"

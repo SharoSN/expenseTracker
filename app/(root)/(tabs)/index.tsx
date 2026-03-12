@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useMemo } from "react";
 import {
   View,
   SafeAreaView,
@@ -28,7 +28,6 @@ const Home = () => {
   const queryClient = useQueryClient();
   const { user } = useGlobalContext();
 
-  // Zustand store (single source of truth)
   const {
     wallets: storeWallets,
     transactions: storeTransactions,
@@ -37,57 +36,38 @@ const Home = () => {
   } = useWalletStore();
 
   const [refreshing, setRefreshing] = useState(false);
+  const [selectedWalletId, setSelectedWalletId] = useState<string | null>(null);
 
-  // ---------------------------
-  // AUTH + WEBSOCKET SETUP
-  // ---------------------------
+  const { wallets: queryWallets, isLoading: isLoadingWallets } =
+    useWalletData();
 
-  // ---------------------------
-  // FETCH: Wallets (React Query)
-  // ---------------------------
-  const {
-    wallets: queryWallets,
-    isLoading: isLoadingWallets,
-    isError: isErrorWallets,
-    totalBalance
-  } = useWalletData();
-
-  // Sync React Query → Zustand
   useEffect(() => {
     if (queryWallets) setWallets(queryWallets);
   }, [queryWallets]);
 
-  // ---------------------------
-  // FETCH: Transactions (React Query)
-  // ---------------------------
-  const {
-    data: queryTransactions,
-    isLoading: isLoadingTransactions,
-    isError: isErrorTransactions
-  } = useTransactionData();
+  const { data: queryTransactions, isLoading: isLoadingTransactions } =
+    useTransactionData();
 
-  // Sync React Query → Zustand
   useEffect(() => {
     if (queryTransactions) setTransactions(queryTransactions);
   }, [queryTransactions]);
 
-  // ---------------------------
-  // PULL TO REFRESH
-  // ---------------------------
+  const filteredTransactions = useMemo(() => {
+    if (!selectedWalletId) return storeTransactions;
+    return (
+      storeTransactions?.filter((t) => t.walletId === selectedWalletId) ?? []
+    );
+  }, [storeTransactions, selectedWalletId]);
+
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-
     await Promise.all([
       queryClient.invalidateQueries(["wallets", user?.$id]),
       queryClient.invalidateQueries(["transactions", user?.$id])
     ]);
-
     setRefreshing(false);
   }, [queryClient, user?.$id]);
 
-  // ---------------------------
-  // LOADING WHILE AUTH IS LOADING
-  // ---------------------------
   if (!user) {
     return (
       <SafeAreaView className="flex-1 justify-center items-center bg-white">
@@ -121,7 +101,6 @@ const Home = () => {
         </View>
       </BlurView>
 
-      {/* Content with top padding to account for fixed header */}
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{
@@ -133,15 +112,11 @@ const Home = () => {
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
       >
-        {/* Wallets UI */}
-        <HomeCard wallets={storeWallets} />
+        <HomeCard onWalletSelect={setSelectedWalletId} />
 
-        {/* Transactions UI */}
-
-        {/* TEMP DEBUG */}
         <TransactionsList
           title="Recent Transactions"
-          data={storeTransactions} // ✅ make sure this is storeTransactions not something else
+          data={filteredTransactions}
           loading={isLoading}
         />
       </ScrollView>

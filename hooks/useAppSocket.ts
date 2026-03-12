@@ -1,9 +1,9 @@
-// hooks/useAppSocket.ts
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useWalletStore } from "@/lib/walletStore";
 
 const WS_URL = "ws://172.20.10.5:3000";
+
 const RECONNECT_BASE_DELAY = 3000;
 const RECONNECT_MAX_DELAY = 30000;
 
@@ -26,18 +26,40 @@ export interface Allowance {
   resetTime: string;
 }
 
+export interface EnrichedTransaction {
+  id: string;
+  date: string;
+  type: "income" | "expense";
+  amount: number;
+  category: string;
+  description: string | null;
+  walletName: string;
+  formattedAmount: string;
+}
+
 export interface Visualization {
   type: string;
-  chartType: "bar" | "line";
-  data: any[];
-  title: string;
-  xAxis: string;
-  yAxis: string;
-  series: Array<{
-    name: string;
-    color: string;
-    key: string;
-  }>;
+  chartType?: "bar" | "line";
+  data?: any[];
+  title?: string;
+  xAxis?: string;
+  yAxis?: string;
+  series?: Array<{ name: string; color: string; key: string }>;
+  transactions?: EnrichedTransaction[];
+  charts?: any[];
+  anomalies?: any[];
+  insights?: any[];
+}
+
+// Shape of a transaction candidate sent by transaction_selection event
+export interface TransactionCandidate {
+  id: string;
+  amount: number;
+  type: "income" | "expense";
+  category: string;
+  date: string;
+  walletName: string;
+  formattedAmount: string;
 }
 
 interface WSMessage {
@@ -49,6 +71,9 @@ interface WSMessage {
   allowance?: Allowance;
   text?: string;
   visualization?: Visualization;
+  awaitingWallet?: boolean;
+  wallets?: Array<{ id: string; name: string; amount: number }>;
+  transactions?: TransactionCandidate[];
 }
 
 export function useAppSocket(userId: string | null) {
@@ -59,25 +84,31 @@ export function useAppSocket(userId: string | null) {
   const [isConnected, setIsConnected] = useState(false);
   const [remainingAllowance, setRemainingAllowance] =
     useState<Allowance | null>(null);
+  const [awaitingWallet, setAwaitingWallet] = useState(false);
+  const [walletSelection, setWalletSelection] = useState<Array<{
+    id: string;
+    name: string;
+    amount: number;
+  }> | null>(null);
+  const [transactionSelection, setTransactionSelection] = useState<
+    TransactionCandidate[] | null
+  >(null);
+  const [paywallVisible, setPaywallVisible] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const allowanceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const reconnectDelayRef = useRef(RECONNECT_BASE_DELAY);
-  // Flag to suppress reconnect when we intentionally close (e.g. on unmount)
   const isIntentionalCloseRef = useRef(false);
 
   const queryClient = useQueryClient();
   const { setWallets, setTransactions, wallets, transactions } =
     useWalletStore();
 
-  // ─── Helpers ────────────────────────────────────────────────────────────────
-
   const scheduleAllowanceCheck = useCallback(
     (ws: WebSocket, userId: string) => {
-      if (allowanceTimeoutRef.current) {
+      if (allowanceTimeoutRef.current)
         clearTimeout(allowanceTimeoutRef.current);
-      }
       allowanceTimeoutRef.current = setTimeout(() => {
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: "check_allowance", userId }));
@@ -88,35 +119,33 @@ export function useAppSocket(userId: string | null) {
     []
   );
 
-  // ─── Public API ─────────────────────────────────────────────────────────────
-
   const sendMessage = useCallback(
     (data: any) => {
       if (!userId) {
-        console.warn("sendMessage skipped: no userId yet", data);
+        console.warn("no userId");
         return;
       }
-      // FIX: operator precedence bug — was `!wsRef.current?.readyState === WebSocket.OPEN`
       if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-        console.warn("Cannot send message: WebSocket not connected");
+        console.warn(
+          "❌ sendMessage DROPPED — socket state:",
+          wsRef.current?.readyState
+        );
         return;
       }
       const payload = { ...data, userId };
       wsRef.current.send(JSON.stringify(payload));
-      console.log("📤 Message sent:", data.type);
+      console.log("📤 Sent:", data.type, "| socket:", wsRef.current.readyState);
     },
     [userId]
   );
 
   const checkRemainingAllowance = useCallback(() => {
     if (!userId) return;
-    // FIX: read readyState directly from the ref instead of relying on potentially stale `isConnected` state
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
       console.warn("Cannot check allowance: WebSocket not ready");
       return;
     }
     wsRef.current.send(JSON.stringify({ type: "check_allowance", userId }));
-    console.log("📊 Checking remaining allowance...");
   }, [userId]);
 
   const triggerAnimation = useCallback(
@@ -131,8 +160,6 @@ export function useAppSocket(userId: string | null) {
     setLastMessage(null);
     setLastVisualization(null);
   }, []);
-
-  // ─── Wallet / Transaction handlers ──────────────────────────────────────────
 
   const handleWalletCreated = useCallback(
     (wallet: Wallet) => {
@@ -211,14 +238,11 @@ export function useAppSocket(userId: string | null) {
     [transactions, userId, setTransactions, queryClient]
   );
 
-  // ─── WebSocket connection ────────────────────────────────────────────────────
-
   const connectWebSocket = useCallback(() => {
     if (!userId) {
       console.log("⏭️ Skipping WebSocket connect - no userId");
       return;
     }
-
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       console.log("⏭️ WebSocket already connected");
       return;
@@ -231,9 +255,9 @@ export function useAppSocket(userId: string | null) {
 
     ws.onopen = () => {
       console.log("✅ WebSocket connected");
-      // Reset backoff on successful connection
       reconnectDelayRef.current = RECONNECT_BASE_DELAY;
       setIsConnected(true);
+      setAwaitingWallet(false);
       ws.send(JSON.stringify({ type: "user_connected", userId }));
       scheduleAllowanceCheck(ws, userId);
     };
@@ -249,43 +273,53 @@ export function useAppSocket(userId: string | null) {
             limit: data.allowance.limit,
             resetTime: data.allowance.resetTime
           });
-          console.log("📊 Allowance:", data.allowance);
         }
 
-        if (data.type === "wallet_created" && data.wallet) {
+        if (data.type === "wallet_created" && data.wallet)
           handleWalletCreated(data.wallet);
-        }
-
-        if (data.type === "wallet_deleted" && data.walletId) {
+        if (data.type === "wallet_deleted" && data.walletId)
           handleWalletDeleted(data.walletId);
-        }
-
-        if (data.type === "wallet_updated" && data.wallet) {
+        if (data.type === "wallet_updated" && data.wallet)
           handleWalletUpdated(data.wallet, ws);
-        }
-
-        if (data.type === "transaction_created" && data.transaction) {
+        if (data.type === "transaction_created" && data.transaction)
           handleTransactionCreated(data.transaction, ws);
-        }
-
-        if (data.type === "transaction_deleted" && data.transactionId) {
+        if (data.type === "transaction_deleted" && data.transactionId)
           handleTransactionDeleted(data.transactionId);
-        }
 
         if (data.type === "rate_limit_exceeded") {
           console.warn("⚠️ Rate limit exceeded:", data.text);
+          setPaywallVisible(true);
           setLastMessage(data.text ?? null);
           setLastVisualization(null);
+          setAwaitingWallet(false);
         }
 
         if (data.type === "response" && typeof data.text === "string") {
-          console.log("📨 Response received:", {
+          console.log("📨 Response:", {
             text: data.text.substring(0, 50) + "...",
-            hasVisualization: !!data.visualization
+            awaitingWallet: !!data.awaitingWallet
           });
           setLastMessage(data.text);
           setLastVisualization(data.visualization ?? null);
+          setAwaitingWallet(data.awaitingWallet === true);
+          // A real response means any pending pickers should close
+          setTransactionSelection(null);
           scheduleAllowanceCheck(ws, userId);
+        }
+
+        if (data.type === "wallet_selection") {
+          setWalletSelection(data.wallets ?? null);
+          setAwaitingWallet(true);
+        }
+
+        // ── NEW: transaction selection prompt from server ──────────────────
+        if (data.type === "transaction_selection") {
+          console.log(
+            "🔀 Transaction selection needed:",
+            data.transactions?.length,
+            "candidates"
+          );
+          setTransactionSelection(data.transactions ?? null);
         }
       } catch (err) {
         console.error("Failed to parse WS message:", err);
@@ -296,13 +330,11 @@ export function useAppSocket(userId: string | null) {
       console.log("⚠️ WebSocket closed");
       setIsConnected(false);
 
-      // FIX: do NOT reconnect when we closed intentionally (component unmount)
       if (isIntentionalCloseRef.current) {
         console.log("🛑 Intentional close — not reconnecting");
         return;
       }
 
-      // FIX: exponential backoff with a cap
       const delay = Math.min(reconnectDelayRef.current, RECONNECT_MAX_DELAY);
       reconnectDelayRef.current = Math.min(delay * 2, RECONNECT_MAX_DELAY);
       console.log(`🔄 Reconnecting in ${delay / 1000}s...`);
@@ -310,7 +342,7 @@ export function useAppSocket(userId: string | null) {
     };
 
     ws.onerror = (err) => {
-      console.error("❌ WebSocket error:", err);
+      console.log("❌ WebSocket error:", err);
       ws.close();
     };
   }, [
@@ -323,26 +355,15 @@ export function useAppSocket(userId: string | null) {
     handleTransactionDeleted
   ]);
 
-  // ─── Lifecycle ───────────────────────────────────────────────────────────────
-
   useEffect(() => {
-    if (userId) {
-      connectWebSocket();
-    }
-
+    if (userId) connectWebSocket();
     return () => {
-      // FIX: mark as intentional so onclose doesn't reschedule a reconnect
       isIntentionalCloseRef.current = true;
-
-      if (allowanceTimeoutRef.current) {
+      if (allowanceTimeoutRef.current)
         clearTimeout(allowanceTimeoutRef.current);
-      }
-      if (reconnectTimeoutRef.current) {
+      if (reconnectTimeoutRef.current)
         clearTimeout(reconnectTimeoutRef.current);
-      }
-      if (wsRef.current) {
-        wsRef.current.close();
-      }
+      if (wsRef.current) wsRef.current.close();
     };
   }, [userId, connectWebSocket]);
 
@@ -356,6 +377,13 @@ export function useAppSocket(userId: string | null) {
     clearLastMessage,
     isConnected,
     remainingAllowance,
-    checkRemainingAllowance
+    checkRemainingAllowance,
+    awaitingWallet,
+    walletSelection,
+    setWalletSelection,
+    transactionSelection,
+    setTransactionSelection,
+    paywallVisible,
+    setPaywallVisible
   };
 }
