@@ -145,6 +145,55 @@ const SummaryCard = ({ text }) => {
   );
 };
 
+// ─── Budget List Card ─────────────────────────────────────────────────────────
+const BudgetListCard = ({ budgets }) => {
+  if (!budgets || budgets.length === 0)
+    return <Text style={styles.aiText}>No budgets found.</Text>;
+
+  return (
+    <View style={styles.section}>
+      <Text style={styles.sectionLabel}>MONTHLY BUDGETS</Text>
+      {budgets.map((b) => {
+        const color =
+          b.pct >= 100 ? "#f43f5e" : b.pct >= 80 ? "#f59e0b" : "#10b981";
+        const indicator = b.pct >= 100 ? "🔴" : b.pct >= 80 ? "🟡" : "🟢";
+        return (
+          <View key={b.id} style={styles.budgetItem}>
+            {/* Label row */}
+            <View style={styles.budgetLabelRow}>
+              <Text style={styles.budgetLabel}>
+                {indicator} {b.label.charAt(0).toUpperCase() + b.label.slice(1)}
+              </Text>
+              <Text style={styles.budgetAmounts}>
+                €{b.spent.toFixed(2)}{" "}
+                <Text style={styles.budgetLimit}>/ €{b.limit.toFixed(2)}</Text>
+              </Text>
+            </View>
+
+            {/* Progress bar */}
+            <View style={styles.budgetTrack}>
+              <View
+                style={[
+                  styles.budgetFill,
+                  { width: `${Math.min(b.pct, 100)}%`, backgroundColor: color }
+                ]}
+              />
+            </View>
+
+            {/* Footer row */}
+            <View style={styles.budgetFooterRow}>
+              <Text style={[styles.budgetPct, { color }]}>{b.pct}% used</Text>
+              <Text style={styles.budgetRemaining}>
+                €{b.remaining.toFixed(2)} remaining
+              </Text>
+            </View>
+          </View>
+        );
+      })}
+    </View>
+  );
+};
+
 // ─── Analytics Card ───────────────────────────────────────────────────────────
 const AnalyticsCard = ({ message, chartWidth }) => {
   const viz = message.visualization;
@@ -534,9 +583,13 @@ const AIResponseMessages = ({ message }) => {
   const chartWidth = screenWidth - 80;
 
   const isMultiChart = message.visualization?.type === "multi_chart";
-  const isTransactionList = message.visualization?.type === "transaction_list"; // 👈 add
+  const isTransactionList = message.visualization?.type === "transaction_list";
+  const isBudgetList = message.visualization?.type === "budget_list"; // ✅ NEW
   const isSingleChart =
-    message.visualization && !isMultiChart && !isTransactionList; // 👈 update
+    message.visualization &&
+    !isMultiChart &&
+    !isTransactionList &&
+    !isBudgetList; // ✅ UPDATED
 
   return (
     <View style={styles.outerContainer}>
@@ -552,19 +605,26 @@ const AIResponseMessages = ({ message }) => {
               </Text>
             </View>
           )}
-          {isTransactionList && ( // 👈 add badge for recent
+          {isTransactionList && (
             <View style={styles.badge}>
               <Text style={styles.badgeText}>RECENT</Text>
+            </View>
+          )}
+          {isBudgetList && ( // ✅ NEW badge
+            <View style={styles.badge}>
+              <Text style={styles.badgeText}>BUDGETS</Text>
             </View>
           )}
         </View>
 
         {isMultiChart ? (
           <AnalyticsCard message={message} chartWidth={chartWidth} />
-        ) : isTransactionList ? ( // 👈 add branch
+        ) : isTransactionList ? (
           <TransactionList
             transactions={message.visualization?.transactions ?? []}
           />
+        ) : isBudgetList ? ( // ✅ NEW branch
+          <BudgetListCard budgets={message.visualization?.budgets ?? []} />
         ) : isSingleChart ? (
           <SingleChartCard message={message} chartWidth={chartWidth} />
         ) : (
@@ -673,6 +733,54 @@ const styles = StyleSheet.create({
   },
   walletName: { color: "#64748b", fontSize: 13, flex: 1 },
   walletAmount: { color: "#0f172a", fontSize: 13, fontWeight: "600" },
+
+  // ── Budget List ──
+  budgetItem: {
+    marginBottom: 16
+  },
+  budgetLabelRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 6
+  },
+  budgetLabel: {
+    color: "#0f172a",
+    fontSize: 13,
+    fontWeight: "600"
+  },
+  budgetAmounts: {
+    color: "#0f172a",
+    fontSize: 13,
+    fontWeight: "700"
+  },
+  budgetLimit: {
+    color: "#94a3b8",
+    fontWeight: "400"
+  },
+  budgetTrack: {
+    height: 8,
+    backgroundColor: "#f1f5f9",
+    borderRadius: 4,
+    overflow: "hidden"
+  },
+  budgetFill: {
+    height: "100%",
+    borderRadius: 4
+  },
+  budgetFooterRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: 4
+  },
+  budgetPct: {
+    fontSize: 11,
+    fontWeight: "600"
+  },
+  budgetRemaining: {
+    color: "#94a3b8",
+    fontSize: 11
+  },
 
   // ── Stats row ──
   statsRow: { flexDirection: "row", gap: 8, marginBottom: 16 },
@@ -826,4 +934,5 @@ const styles = StyleSheet.create({
   insightEmoji: { fontSize: 14 },
   insightText: { color: "#0c4a6e", fontSize: 12, lineHeight: 18, flex: 1 }
 });
+
 export default AIResponseMessages;

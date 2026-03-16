@@ -1,4 +1,3 @@
-// TransactionModal.tsx
 import React, { useCallback, useEffect, useState } from "react";
 import {
   Alert,
@@ -34,6 +33,7 @@ import {
   handleDeleteTransaction
 } from "@/lib/appwrite";
 import { TransactionType } from "@/types";
+import { useSocket } from "@/context/SocketContext";
 
 const TransactionModal = () => {
   const { user } = useGlobalContext();
@@ -41,13 +41,14 @@ const TransactionModal = () => {
   const router = useRouter();
   const queryClient = useQueryClient();
 
-  // Global state
   const { wallets } = useWalletStore();
   const displayCurrency = useWalletStore((state) => state.currency);
   const displayCurrencyConfig = CURRENCIES[displayCurrency];
 
-  const [walletName, setWalletName] = useState<string>("");
+  // ── Use the SHARED socket — same connection as velora.tsx ─────────────────
+  const { sendMessage } = useSocket();
 
+  const [walletName, setWalletName] = useState<string>("");
   const [transaction, setTransaction] = useState<
     TransactionType & { amountText?: string }
   >({
@@ -62,12 +63,10 @@ const TransactionModal = () => {
 
   const isEditMode = !!params?.id;
 
-  // Load transaction when editing - run ONLY when params.id changes
   useEffect(() => {
     if (params?.id) {
       const oldTx = params as any;
-
-      const parsedTransaction = {
+      setTransaction({
         id: oldTx.id,
         type: oldTx.type || "expense",
         amount: Number(oldTx.amount),
@@ -76,19 +75,12 @@ const TransactionModal = () => {
         category: oldTx.category || "",
         date: new Date(oldTx.date),
         walletId: oldTx.walletId || ""
-      };
-
-      setTransaction(parsedTransaction);
-
-      // Find and display wallet name
+      });
       const wallet = wallets.find((w) => w.$id === oldTx.walletId);
-      if (wallet) {
-        setWalletName(wallet.name);
-      }
+      if (wallet) setWalletName(wallet.name);
     }
   }, [params?.id, wallets]);
 
-  // Auto-select first wallet on initial load (create mode only)
   useEffect(() => {
     if (!params?.id && wallets.length > 0 && !transaction.walletId) {
       setTransaction((prev) => ({ ...prev, walletId: wallets[0].$id }));
@@ -96,7 +88,11 @@ const TransactionModal = () => {
     }
   }, [wallets, params?.id, transaction.walletId]);
 
-  // == Mutations using React Query ==
+  // ── Trigger budget check on the SHARED socket after saving ───────────────
+  const triggerBudgetCheck = useCallback(() => {
+    sendMessage({ type: "check_budget_after_transaction" });
+  }, [sendMessage]);
+
   const saveTransactionMutation = useMutation({
     mutationFn: createOrUpdateTransaction,
     onMutate: async (newTransaction) => {
@@ -104,29 +100,24 @@ const TransactionModal = () => {
         queryKey: ["transactions", user?.$id]
       });
       await queryClient.cancelQueries({ queryKey: ["wallets", user?.$id] });
-
       const previousTransactions = queryClient.getQueryData([
         "transactions",
         user?.$id
       ]);
-
       queryClient.setQueryData(["transactions", user?.$id], (old: any) => {
         const optimisticTransaction = {
           ...newTransaction,
           $id: params?.id || `optimistic-${Date.now()}`
         };
-        if (params?.id) {
+        if (params?.id)
           return old.map((t: any) =>
             t.$id === params.id ? optimisticTransaction : t
           );
-        } else {
-          return [optimisticTransaction, ...old];
-        }
+        return [optimisticTransaction, ...old];
       });
-
       return { previousTransactions };
     },
-    onError: (err: any, newTransaction, context: any) => {
+    onError: (err: any, _newTransaction, context: any) => {
       queryClient.setQueryData(
         ["transactions", user?.$id],
         context?.previousTransactions
@@ -136,6 +127,7 @@ const TransactionModal = () => {
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["transactions", user?.$id] });
       queryClient.invalidateQueries({ queryKey: ["wallets", user?.$id] });
+      if (transaction.type === "expense") triggerBudgetCheck();
       Alert.alert(
         "Success",
         params?.id ? "Transaction updated" : "Transaction added"
@@ -151,19 +143,17 @@ const TransactionModal = () => {
         queryKey: ["transactions", user?.$id]
       });
       await queryClient.cancelQueries({ queryKey: ["wallets", user?.$id] });
-
       const previousTransactions = queryClient.getQueryData([
         "transactions",
         user?.$id
       ]);
-
-      queryClient.setQueryData(["transactions", user?.$id], (old: any) => {
-        return old?.filter((t: any) => t.$id !== deletedId) ?? [];
-      });
-
+      queryClient.setQueryData(
+        ["transactions", user?.$id],
+        (old: any) => old?.filter((t: any) => t.$id !== deletedId) ?? []
+      );
       return { previousTransactions };
     },
-    onError: (err: any, deletedId, context: any) => {
+    onError: (err: any, _deletedId, context: any) => {
       queryClient.setQueryData(
         ["transactions", user?.$id],
         context?.previousTransactions
@@ -178,10 +168,8 @@ const TransactionModal = () => {
     }
   });
 
-  // == Handlers ==
   const handleSave = async () => {
     const { type, amount, description, date, category, walletId } = transaction;
-
     if (
       !walletId ||
       !date ||
@@ -192,12 +180,10 @@ const TransactionModal = () => {
       Alert.alert("Invalid Data", "Please fill all required fields correctly.");
       return;
     }
-
-    // ✅ Save in EUR (database stores EUR, regardless of display currency)
     saveTransactionMutation.mutate({
       id: params?.id as string,
       type,
-      amount, // ✅ Always EUR amount
+      amount,
       description,
       category,
       date,
@@ -225,7 +211,6 @@ const TransactionModal = () => {
     (id: string) => {
       const wallet = wallets.find((w) => w.$id === id);
       if (wallet) {
-        // Show warning if changing wallet in edit mode
         if (isEditMode && transaction.walletId !== id) {
           Alert.alert(
             "Change Wallet",
@@ -253,13 +238,6 @@ const TransactionModal = () => {
 
   const isPending =
     saveTransactionMutation.isPending || deleteTransactionMutation.isPending;
-
-  // ✅ FIX: Display amount preview in selected currency
-  const getDisplayAmount = () => {
-    if (!transaction.amount)
-      return `${displayCurrencyConfig?.symbol || "€"}0.00`;
-    return formatInDisplayCurrency(transaction.amount);
-  };
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: "transparent" }}>
@@ -296,7 +274,6 @@ const TransactionModal = () => {
                 transaction={transaction}
                 setTransaction={setTransaction}
               />
-
               <View className="mt-8">
                 <Text className="text-lg font-medium text-gray-700">
                   Wallet
@@ -307,7 +284,6 @@ const TransactionModal = () => {
                   onSelectWallet={onSelectWallet}
                 />
               </View>
-
               <View className="mt-8">
                 <Text className="text-lg font-medium text-gray-700">Date</Text>
                 <TransactionDatePicker
@@ -315,14 +291,12 @@ const TransactionModal = () => {
                   setTransaction={setTransaction}
                 />
               </View>
-
               <View className="mt-6">
                 <View className="flex-row justify-between items-center mb-1">
                   <Text className="text-lg font-medium text-gray-700">
                     Amount
                   </Text>
                 </View>
-
                 <Input
                   keyboardType="numeric"
                   value={transaction.amountText}
@@ -339,13 +313,10 @@ const TransactionModal = () => {
                   className="border border-gray-500 rounded-lg w-full p-4 mt-3 h-16"
                   editable={!isPending}
                 />
-
-                {/* ✅ FIX: Add helper text */}
                 <Text className="text-xs text-gray-500 mt-2">
                   Enter amount in EUR (€). It will be converted for display.
                 </Text>
               </View>
-
               <View className="mt-6 mb-8">
                 <Text className="text-lg font-medium text-gray-700">
                   Description
@@ -367,16 +338,14 @@ const TransactionModal = () => {
               <TouchableOpacity
                 onPress={handleSave}
                 disabled={isPending}
-                className={`w-full rounded-lg p-3 ${
-                  isPending ? "bg-gray-400" : "bg-black-1"
-                }`}
+                className={`w-full rounded-lg p-3 ${isPending ? "bg-gray-400" : "bg-black-1"}`}
               >
                 <Text className="text-white text-center font-medium text-lg">
                   {saveTransactionMutation.isPending
                     ? "Saving..."
                     : isEditMode
-                    ? "Update Transaction"
-                    : "Save Transaction"}
+                      ? "Update Transaction"
+                      : "Save Transaction"}
                 </Text>
               </TouchableOpacity>
             </View>

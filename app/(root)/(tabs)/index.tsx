@@ -12,42 +12,41 @@ import {
 import { useRouter } from "expo-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { BlurView } from "expo-blur";
-
 import HeaderBox from "@/components/HeaderBox";
 import HomeCard from "@/components/HomeCard";
 import { TransactionsList } from "@/components/TransactionsList";
 import { useGlobalContext } from "@/lib/global-provider";
 import { useWalletStore } from "@/lib/walletStore";
-
 import icons from "@/constants/icons";
 import { useTransactionData } from "@/hooks/userTransactionData";
 import { useWalletData } from "@/hooks/useWalletData";
+import BudgetAlertBanner from "@/components/BudgetAlertBanner";
+import { useSocket } from "@/context/SocketContext";
 
 const Home = () => {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { user } = useGlobalContext();
-
   const {
     wallets: storeWallets,
     transactions: storeTransactions,
     setWallets,
     setTransactions
   } = useWalletStore();
-
   const [refreshing, setRefreshing] = useState(false);
   const [selectedWalletId, setSelectedWalletId] = useState<string | null>(null);
 
+  // ── Budget alert banner ───────────────────────────────────────────────────
+  const { budgetAlerts, clearBudgetAlerts } = useSocket();
+
   const { wallets: queryWallets, isLoading: isLoadingWallets } =
     useWalletData();
-
   useEffect(() => {
     if (queryWallets) setWallets(queryWallets);
   }, [queryWallets]);
 
   const { data: queryTransactions, isLoading: isLoadingTransactions } =
     useTransactionData();
-
   useEffect(() => {
     if (queryTransactions) setTransactions(queryTransactions);
   }, [queryTransactions]);
@@ -80,7 +79,8 @@ const Home = () => {
 
   return (
     <SafeAreaView className="flex-1 bg-white">
-      {/* Glassmorphism Header */}
+      <BudgetAlertBanner alerts={budgetAlerts} onDismiss={clearBudgetAlerts} />
+
       <BlurView
         intensity={90}
         tint="light"
@@ -113,7 +113,6 @@ const Home = () => {
         }
       >
         <HomeCard onWalletSelect={setSelectedWalletId} />
-
         <TransactionsList
           title="Recent Transactions"
           data={filteredTransactions}
@@ -121,7 +120,6 @@ const Home = () => {
         />
       </ScrollView>
 
-      {/* Add Transaction Button */}
       <TouchableOpacity
         className="absolute bottom-24 right-2 z-50"
         onPress={() => router.push("/transactionModal")}

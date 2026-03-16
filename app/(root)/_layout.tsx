@@ -20,7 +20,6 @@ export default function AppLayout() {
     }
   }, [isLogged, loading, isReady]);
 
-  // While loading OR until app is ready, show loading screen
   if (loading || !isReady) {
     return (
       <SafeAreaView className="bg-white h-full flex justify-center items-center">
@@ -29,11 +28,9 @@ export default function AppLayout() {
     );
   }
 
-  // If not logged in, redirect to sign-in
   if (!isLogged || shouldRedirect) {
     return <Redirect href="/sign-in" />;
   }
 
-  // Otherwise, show the app layout
   return <Slot />;
 }

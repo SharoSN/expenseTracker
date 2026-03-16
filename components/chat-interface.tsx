@@ -18,6 +18,16 @@ interface Message {
     charts?: any[];
     anomalies?: any[];
     insights?: any[];
+    budgets?: Array<{
+      // ✅ ADDED
+      id: string;
+      category: string | null;
+      label: string;
+      limit: number;
+      spent: number;
+      pct: number;
+      remaining: number;
+    }>;
   };
 }
 

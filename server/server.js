@@ -19,6 +19,7 @@ const CONFIG = {
   dbId: "67ec72cd002e8ca58ead",
   walletCollectionId: "6820053a001909436a14",
   transactionCollectionId: "683e28b6002b61669545",
+  budgetCollectionId: "budgets",
   usersCollectionId: "67ec73c70004d6f7637c",
   currency: "€",
   currencyCode: "EUR"
@@ -36,26 +37,23 @@ const rateLimiter = new RateLimiter(
   CONFIG.rateLimitCollectionId
 );
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
-
 const wss = new WebSocketServer({ host: "0.0.0.0", port: 3000 });
 console.log("✅ WebSocket server running on ws://0.0.0.0:3000");
 
 const pendingAudio = new Map();
+const userSockets = new Map();
 
 function sendToUser(ws, data) {
   if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(data));
 }
-
 function sendProgressUpdate(ws, message) {
   sendToUser(ws, { type: "progress", text: message });
 }
-
 const createUserPermissions = (userId) => [
   Permission.read(Role.user(userId)),
   Permission.update(Role.user(userId)),
   Permission.delete(Role.user(userId))
 ];
-
 const verifyOwnership = (document, userId, userIdField = "userId") => {
   if (document[userIdField] !== userId)
     throw new Error("Unauthorized: Document does not belong to this user");
@@ -80,36 +78,69 @@ async function transcribeAudio(chunks, format = "m4a") {
   }
 }
 
-async function getUserFinancialSummary(userId) {
-  try {
-    const wallets = await database.listDocuments(
-      CONFIG.dbId,
-      CONFIG.walletCollectionId,
-      [Query.equal("userId", userId)]
-    );
-    const transactions = await database.listDocuments(
+async function getAllUserTransactions(userId) {
+  const allDocs = [];
+  let offset = 0;
+  const batchSize = 100;
+  while (true) {
+    const res = await database.listDocuments(
       CONFIG.dbId,
       CONFIG.transactionCollectionId,
-      [Query.equal("uid", userId)]
+      [Query.equal("uid", userId), Query.limit(batchSize), Query.offset(offset)]
     );
+    allDocs.push(...res.documents);
+    if (res.documents.length < batchSize) break;
+    offset += batchSize;
+  }
+  return allDocs;
+}
+
+async function getMonthlySpending(userId) {
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const allTransactions = await getAllUserTransactions(userId);
+  const monthlyExpenses = allTransactions.filter(
+    (tx) => tx.type === "expense" && new Date(tx.date) >= monthStart
+  );
+  const total = monthlyExpenses.reduce((s, tx) => s + tx.amount, 0);
+  const byCategory = {};
+  monthlyExpenses.forEach((tx) => {
+    const cat = tx.category || "others";
+    byCategory[cat] = (byCategory[cat] || 0) + tx.amount;
+  });
+  return { total, byCategory };
+}
+
+async function getUserFinancialSummary(userId) {
+  try {
+    const [walletsRes, monthlySpending] = await Promise.all([
+      database.listDocuments(CONFIG.dbId, CONFIG.walletCollectionId, [
+        Query.equal("userId", userId)
+      ]),
+      getMonthlySpending(userId)
+    ]);
+    const allTransactions = await getAllUserTransactions(userId);
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const monthlyIncome = allTransactions
+      .filter((tx) => tx.type === "income" && new Date(tx.date) >= monthStart)
+      .reduce((s, tx) => s + tx.amount, 0);
     const summary = {
       totalBalance: 0,
-      totalIncome: 0,
-      totalExpense: 0,
-      walletCount: wallets.documents.length,
-      transactionCount: transactions.documents.length,
-      transactions: transactions.documents || [],
-      wallets: wallets.documents.map((w) => ({
+      totalIncome: monthlyIncome,
+      totalExpense: monthlySpending.total,
+      walletCount: walletsRes.documents.length,
+      transactionCount: allTransactions.length,
+      transactions: allTransactions,
+      wallets: walletsRes.documents.map((w) => ({
         name: w.name,
         amount: w.amount,
         totalIncome: w.totalIncome,
         totalExpense: w.totalExpense
       }))
     };
-    wallets.documents.forEach((w) => {
+    walletsRes.documents.forEach((w) => {
       summary.totalBalance += w.amount;
-      summary.totalIncome += w.totalIncome;
-      summary.totalExpense += w.totalExpense;
     });
     return summary;
   } catch (err) {
@@ -295,40 +326,262 @@ async function getUserWallets(userId) {
 async function resolveWallet(userId, aiWalletName, userText, userWallets) {
   const normalizedName = (aiWalletName || "").toLowerCase().trim();
   const lowerUserText = (userText || "").toLowerCase();
-
   const mentionedInText = userWallets.find((w) =>
     lowerUserText.includes(w.name.toLowerCase().trim())
   );
-  if (mentionedInText) {
-    console.log(`✅ Wallet resolved from user text: "${mentionedInText.name}"`);
-    return { walletId: mentionedInText.$id };
-  }
-
+  if (mentionedInText) return { walletId: mentionedInText.$id };
   const isAIDefault = normalizedName === "main" || normalizedName === "";
   if (!isAIDefault) {
     const exactMatch = userWallets.find(
       (w) => w.name.toLowerCase().trim() === normalizedName
     );
-    if (exactMatch) {
-      console.log(`✅ Wallet resolved by AI name: "${exactMatch.name}"`);
-      return { walletId: exactMatch.$id };
-    }
+    if (exactMatch) return { walletId: exactMatch.$id };
   }
-
   if (userWallets.length === 0) {
     const wallet = await createWallet(userId, "main");
     return { walletId: wallet.$id };
   }
-  if (userWallets.length === 1) {
-    console.log(`✅ Wallet resolved (only one): "${userWallets[0].name}"`);
-    return { walletId: userWallets[0].$id };
-  }
-
-  console.log(
-    `❓ Wallet selection needed. Options: ${userWallets.map((w) => w.name).join(", ")}`
-  );
+  if (userWallets.length === 1) return { walletId: userWallets[0].$id };
   return { needsSelection: true, wallets: userWallets };
 }
+
+// ── BUDGET FUNCTIONS ──────────────────────────────────────────────────────────
+
+async function getUserBudgets(userId) {
+  try {
+    const res = await database.listDocuments(
+      CONFIG.dbId,
+      CONFIG.budgetCollectionId,
+      [Query.equal("userId", userId)]
+    );
+    return res.documents;
+  } catch (err) {
+    console.error("Error getting budgets:", err);
+    return [];
+  }
+}
+
+async function setBudget(userId, amount, category = null) {
+  const existing = await database.listDocuments(
+    CONFIG.dbId,
+    CONFIG.budgetCollectionId,
+    [Query.equal("userId", userId), Query.equal("type", "monthly")]
+  );
+  const match = existing.documents.find((b) =>
+    category ? b.category === category : b.category === null
+  );
+  if (match)
+    return await database.updateDocument(
+      CONFIG.dbId,
+      CONFIG.budgetCollectionId,
+      match.$id,
+      { amount }
+    );
+  return await database.createDocument(
+    CONFIG.dbId,
+    CONFIG.budgetCollectionId,
+    ID.unique(),
+    { userId, type: "monthly", category: category || null, amount },
+    createUserPermissions(userId)
+  );
+}
+
+async function deleteBudget(userId, category = null) {
+  const existing = await database.listDocuments(
+    CONFIG.dbId,
+    CONFIG.budgetCollectionId,
+    [Query.equal("userId", userId), Query.equal("type", "monthly")]
+  );
+  const match = existing.documents.find((b) =>
+    category ? b.category === category : b.category === null
+  );
+  if (!match) return false;
+  verifyOwnership(match, userId, "userId");
+  await database.deleteDocument(
+    CONFIG.dbId,
+    CONFIG.budgetCollectionId,
+    match.$id
+  );
+  return true;
+}
+
+async function checkBudgetAlerts(userId) {
+  try {
+    const [budgets, spending] = await Promise.all([
+      getUserBudgets(userId),
+      getMonthlySpending(userId)
+    ]);
+    console.log(
+      "🧾 Budget check — budgets:",
+      budgets.length,
+      "spending total:",
+      spending.total
+    );
+    if (budgets.length === 0) return [];
+    const alerts = [];
+    for (const budget of budgets) {
+      const isOverall = budget.category === null;
+      const spent = isOverall
+        ? spending.total
+        : spending.byCategory[budget.category] || 0;
+      console.log(
+        `📊 Budget "${budget.category ?? "overall"}": spent=${spent}, limit=${budget.amount}`
+      );
+      if (spent === 0) continue;
+      const pct = (spent / budget.amount) * 100;
+      const label = isOverall
+        ? "overall monthly"
+        : `${budget.category} monthly`;
+      if (pct >= 100) {
+        alerts.push({
+          severity: "exceeded",
+          label,
+          category: budget.category,
+          spent,
+          limit: budget.amount,
+          overBy: spent - budget.amount,
+          pct: Math.round(pct)
+        });
+      } else if (pct >= 80) {
+        alerts.push({
+          severity: "warning",
+          label,
+          category: budget.category,
+          spent,
+          limit: budget.amount,
+          remaining: budget.amount - spent,
+          pct: Math.round(pct)
+        });
+      }
+    }
+    console.log("🚨 Alerts generated:", alerts.length);
+    return alerts;
+  } catch (err) {
+    console.error("Error checking budget alerts:", err);
+    return [];
+  }
+}
+
+function formatBudgetAlertText(alerts) {
+  if (alerts.length === 0) return null;
+  return alerts
+    .map((a) => {
+      if (a.severity === "exceeded")
+        return `🚨 You've exceeded your ${a.label} budget!\n   Spent: €${a.spent.toFixed(2)} / Limit: €${a.limit.toFixed(2)} (over by €${a.overBy.toFixed(2)})`;
+      return `⚠️  You're at ${a.pct}% of your ${a.label} budget.\n   Spent: €${a.spent.toFixed(2)} / Limit: €${a.limit.toFixed(2)} (€${a.remaining.toFixed(2)} remaining)`;
+    })
+    .join("\n\n");
+}
+
+// ── PUSH NOTIFICATIONS ────────────────────────────────────────────────────────
+
+async function savePushToken(userId, pushToken) {
+  try {
+    const res = await database.listDocuments(
+      CONFIG.dbId,
+      CONFIG.usersCollectionId,
+      [Query.equal("$id", userId)]
+    );
+    if (res.documents.length > 0) {
+      await database.updateDocument(
+        CONFIG.dbId,
+        CONFIG.usersCollectionId,
+        res.documents[0].$id,
+        { pushToken }
+      );
+      console.log("📱 Push token saved for", userId);
+    }
+  } catch (err) {
+    console.error("Error saving push token:", err);
+  }
+}
+
+async function getPushToken(userId) {
+  try {
+    const res = await database.listDocuments(
+      CONFIG.dbId,
+      CONFIG.usersCollectionId,
+      [Query.equal("$id", userId)]
+    );
+    return res.documents[0]?.pushToken || null;
+  } catch {
+    return null;
+  }
+}
+
+async function sendPushNotification(pushToken, title, body) {
+  if (!pushToken) return;
+  try {
+    const response = await fetch("https://exp.host/--/api/v2/push/send", {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        to: pushToken,
+        sound: "default",
+        title,
+        body,
+        data: { type: "budget_alert" }
+      })
+    });
+    const result = await response.json();
+    console.log("📬 Push sent:", result?.data?.status || result);
+  } catch (err) {
+    console.error("Error sending push notification:", err);
+  }
+}
+
+async function sendBudgetAlertPush(userId, alerts) {
+  if (alerts.length === 0) return;
+  const pushToken = await getPushToken(userId);
+  if (!pushToken) return;
+  const exceeded = alerts.filter((a) => a.severity === "exceeded");
+  const warnings = alerts.filter((a) => a.severity === "warning");
+  if (exceeded.length > 0) {
+    const a = exceeded[0];
+    await sendPushNotification(
+      pushToken,
+      "🚨 Budget Exceeded!",
+      `Your ${a.label} budget is over by €${a.overBy.toFixed(2)} (spent €${a.spent.toFixed(2)} of €${a.limit.toFixed(2)})`
+    );
+  } else if (warnings.length > 0) {
+    const a = warnings[0];
+    await sendPushNotification(
+      pushToken,
+      "⚠️ Budget Warning",
+      `You've used ${a.pct}% of your ${a.label} budget — €${a.remaining.toFixed(2)} remaining`
+    );
+  }
+}
+
+// ── SEND BUDGET ALERT HELPER ──────────────────────────────────────────────────
+// Sends budget_alert BEFORE response so both travel on the same socket connection
+async function sendBudgetAlertsIfNeeded(ws, userId) {
+  const alerts = await checkBudgetAlerts(userId);
+  console.log("📤 Sending budget alerts:", alerts.length);
+  if (alerts.length > 0) {
+    sendToUser(ws, {
+      type: "budget_alert",
+      alerts,
+      text: formatBudgetAlertText(alerts)
+    });
+    await sendBudgetAlertPush(userId, alerts);
+  }
+  return alerts;
+}
+
+// ── MANUAL TRANSACTION BUDGET CHECK ──────────────────────────────────────────
+async function handleManualTransactionBudgetCheck(ws, userId) {
+  try {
+    await sendBudgetAlertsIfNeeded(ws, userId);
+  } catch (err) {
+    console.error("Error in manual budget check:", err);
+  }
+}
+
+// ── AI COMMAND PARSER ─────────────────────────────────────────────────────────
 
 async function parseCommandWithAI(
   text,
@@ -345,52 +598,37 @@ User Financial Context:
 - Active Wallets: ${financialSummary.wallets.map((w) => w.name).join(", ") || "None"}
 `;
   }
-
   const systemPrompt = `
-You are an intelligent financial advisor AI for a German user. You understand natural language and can parse financial commands with high accuracy.
-
-**LANGUAGE RULE - ABSOLUTE:**
-Always respond in English only. Never respond in German or any other language, regardless of what language the user writes in.
-
-**ABSOLUTE CURRENCY RULE:**
-The user ONLY uses EUR (€) currency.
-ALL amounts in the user's messages are ALREADY in EUR.
-Currency Symbol: €
-Country Code: DE
-Locale: de-DE
+You are an intelligent financial advisor AI for a German user. Always respond in English only. ALL amounts are EUR. Never convert.
 
 ${contextInfo}
 
-Parse the user's message into JSON commands for wallet management. If multiple transactions are mentioned, return ALL of them.
+Categories (use ONLY these): groceries, rent, utilities, transportation, entertainment, dining, health, insurance, savings, clothing, personal, others
 
-**CATEGORY DETECTION - CRITICAL - MUST USE EXACT CATEGORIES:**
-You MUST choose from these EXACT categories ONLY:
-- groceries, rent, utilities, transportation, entertainment, dining, health, insurance, savings, clothing, personal, others
+Rules:
+1. Output ONLY valid JSON. No markdown.
+2. Tolerate casual speech/typos
+3. Use wallet name exactly if mentioned, else "main"
+4. Extract amounts exactly as stated
+5. Multiple transactions → use transactions array
+6. DELETE_WALLET with no name → set name to ""
+7. SET_BUDGET: no category → null (overall). Category → use exact category.
+8. DELETE_BUDGET: same as SET_BUDGET.
 
-**CRITICAL - DO NOT CONVERT, SCALE, OR INTERPRET AMOUNTS:**
-Every numeric amount is a direct EUR value. NEVER apply USD logic.
-
-Critical Rules:
-1. Output ONLY valid JSON. No markdown, no text before or after.
-2. Be extremely tolerant of casual speech and typos
-3. If the user mentions a wallet name, ALWAYS use it exactly as the walletId. Only default to "main" if NO wallet is mentioned at all.
-4. Extract numeric amounts EXACTLY as the user states them
-5. If multiple transactions are mentioned, return them ALL in a transactions array
-6. For DELETE_WALLET: if the user does NOT clearly mention a specific wallet name, set name to "" so the server can ask.
-
-Supported Commands:
-
+Commands:
 CREATE_WALLET: {"action":"create_wallet","name":"<wallet_name>"}
-CREATE_TRANSACTION (SINGLE): {"action":"create_transaction","transaction":{"walletId":"<wallet_name_or_main>","type":"income|expense","amount":<number>,"category":"<category>","description":"<optional>"}}
-CREATE_TRANSACTIONS (MULTIPLE): {"action":"create_transactions","transactions":[{"walletId":"<wallet_name_or_main>","type":"income|expense","amount":<number>,"category":"<category>","description":"<optional>"}]}
+CREATE_TRANSACTION: {"action":"create_transaction","transaction":{"walletId":"<wallet_name_or_main>","type":"income|expense","amount":<number>,"category":"<category>","description":"<optional>"}}
+CREATE_TRANSACTIONS: {"action":"create_transactions","transactions":[{"walletId":"<wallet_name_or_main>","type":"income|expense","amount":<number>,"category":"<category>","description":"<optional>"}]}
 DELETE_WALLET: {"action":"delete_wallet","name":"<wallet_name_or_empty_string>"}
 DELETE_TRANSACTION: {"action":"delete_transaction","amount":<number>,"type":"income|expense|null","category":"<category|null>","walletId":"<wallet_name_or_null>"}
+SET_BUDGET: {"action":"set_budget","amount":<number>,"category":"<category_or_null>"}
+GET_BUDGETS: {"action":"get_budgets"}
+DELETE_BUDGET: {"action":"delete_budget","category":"<category_or_null>"}
 SUMMARY: {"action":"summary"}
 RECENT: {"action":"recent","limit":5}
 ANALYTICS: {"action":"analytics"}
 UNKNOWN: {"action":"unknown"}
 `;
-
   try {
     const response = await openai.chat.completions.create({
       model: "gpt-4-turbo",
@@ -430,16 +668,7 @@ UNKNOWN: {"action":"unknown"}
 async function getAIAdvisoryResponse(text, financialSummary = null) {
   let contextInfo = "";
   if (financialSummary) {
-    contextInfo = `
-**USER FINANCIAL DATA (ALL IN EUR):**
-- Total Balance: ${formatEUR(financialSummary.totalBalance)}
-- Monthly Income: ${formatEUR(financialSummary.totalIncome)}
-- Monthly Expenses: ${formatEUR(financialSummary.totalExpense)}
-- Active Wallets: ${financialSummary.wallets.length}
-${financialSummary.totalIncome > 0 ? `- Savings Rate: ${((1 - financialSummary.totalExpense / financialSummary.totalIncome) * 100).toFixed(1)}%` : ""}
-**WALLETS:**
-${financialSummary.wallets.map((w) => `- ${w.name}: ${formatEUR(w.amount)}`).join("\n")}
-`;
+    contextInfo = `**USER FINANCIAL DATA:**\n- Total Balance: ${formatEUR(financialSummary.totalBalance)}\n- Monthly Income: ${formatEUR(financialSummary.totalIncome)}\n- Monthly Expenses: ${formatEUR(financialSummary.totalExpense)}\n**WALLETS:**\n${financialSummary.wallets.map((w) => `- ${w.name}: ${formatEUR(w.amount)}`).join("\n")}`;
   }
   try {
     const response = await openai.chat.completions.create({
@@ -447,7 +676,7 @@ ${financialSummary.wallets.map((w) => `- ${w.name}: ${formatEUR(w.amount)}`).joi
       messages: [
         {
           role: "system",
-          content: `You are a friendly financial advisor for a German user. Always respond in English only. Use EUR (€) only, never USD.\n${contextInfo}\nRespond warmly in 2-3 sentences max.`
+          content: `You are a friendly financial advisor. Always respond in English. Use EUR only.\n${contextInfo}\nRespond warmly in 2-3 sentences max.`
         },
         { role: "user", content: text }
       ],
@@ -463,7 +692,6 @@ ${financialSummary.wallets.map((w) => `- ${w.name}: ${formatEUR(w.amount)}`).joi
   }
 }
 
-// ── Transaction candidate scoring ─────────────────────────────────────────────
 async function findTransactionCandidates(
   userId,
   amount,
@@ -472,39 +700,26 @@ async function findTransactionCandidates(
   walletId,
   userWallets
 ) {
-  const transactions = await database.listDocuments(
-    CONFIG.dbId,
-    CONFIG.transactionCollectionId,
-    [Query.equal("uid", userId)]
-  );
-
+  const allTransactions = await getAllUserTransactions(userId);
   const walletMap = Object.fromEntries(userWallets.map((w) => [w.$id, w.name]));
-
   let resolvedWalletId = null;
   if (walletId) {
-    const normalizedName = walletId.toLowerCase().trim();
     const matched = userWallets.find(
-      (w) => w.name.toLowerCase().trim() === normalizedName
+      (w) => w.name.toLowerCase().trim() === walletId.toLowerCase().trim()
     );
     if (matched) resolvedWalletId = matched.$id;
   }
-
   const candidates = [];
-
-  for (const txn of transactions.documents) {
+  for (const txn of allTransactions) {
     let score = 0;
-
     if (txn.amount !== amount) continue;
     score += 100;
-
     if (resolvedWalletId) {
       if (txn.walletId === resolvedWalletId) score += 200;
       else score -= 150;
     }
-
     if (type && txn.type === type) score += 50;
     else if (type && txn.type !== type) score -= 80;
-
     if (category) {
       const txnCat = txn.category?.toLowerCase() || "";
       const inCat = category.toLowerCase();
@@ -512,27 +727,20 @@ async function findTransactionCandidates(
       else if (txnCat.includes(inCat) || inCat.includes(txnCat)) score += 25;
       else score -= 20;
     }
-
-    const txnDate = new Date(txn.date);
-    const now = new Date();
-    const daysAgo = (now - txnDate) / (1000 * 60 * 60 * 24);
+    const daysAgo = (new Date() - new Date(txn.date)) / (1000 * 60 * 60 * 24);
     if (daysAgo < 1) score += 30;
     else if (daysAgo < 2) score += 20;
     else if (daysAgo < 7) score += 10;
-
-    if (score > 0) {
+    if (score > 0)
       candidates.push({
         txn: { ...txn, walletName: walletMap[txn.walletId] || "Unknown" },
         score
       });
-    }
   }
-
   candidates.sort((a, b) => b.score - a.score);
   return candidates;
 }
 
-// ── Helper: resolve pending transaction selection ──────────────────────────────
 function resolveTransactionFromInput(input, pendingTxns) {
   const userInput = input.toLowerCase().trim();
   const indexMap = {
@@ -545,19 +753,24 @@ function resolveTransactionFromInput(input, pendingTxns) {
     fourth: 3,
     4: 3
   };
-
-  for (const [word, idx] of Object.entries(indexMap)) {
-    if (userInput.includes(word) && pendingTxns[idx]) {
-      return pendingTxns[idx];
-    }
-  }
-
+  for (const [word, idx] of Object.entries(indexMap))
+    if (userInput.includes(word) && pendingTxns[idx]) return pendingTxns[idx];
   return (
     pendingTxns.find(
       (t) =>
         userInput.includes(t.walletName?.toLowerCase()) ||
         userInput.includes(t.category?.toLowerCase())
     ) || null
+  );
+}
+
+function isCancelIntent(input) {
+  const lower = input.toLowerCase().trim();
+  return (
+    lower.includes("cancel") ||
+    lower.includes("never mind") ||
+    lower.includes("nevermind") ||
+    lower.includes("stop")
   );
 }
 
@@ -588,19 +801,16 @@ async function findWallet(userId, name) {
 async function createWallet(userId, name) {
   const trimmed = name.trim();
   if (!trimmed) throw new Error("Wallet name cannot be empty.");
-
   const duplicate = await findWallet(userId, trimmed);
   if (duplicate)
     throw new Error(
       `You already have a wallet named "${trimmed}". Please choose a different name.`
     );
-
   const allWallets = await getUserWallets(userId);
   if (allWallets.length >= 10)
     throw new Error(
       "Wallet limit reached. You can have a maximum of 10 wallets."
     );
-
   const wallet = await database.createDocument(
     CONFIG.dbId,
     CONFIG.walletCollectionId,
@@ -615,7 +825,6 @@ async function createWallet(userId, name) {
     },
     createUserPermissions(userId)
   );
-  console.log("💾 Wallet created:", wallet.name);
   return wallet;
 }
 
@@ -658,7 +867,6 @@ async function deleteWallet(userId, name) {
     CONFIG.walletCollectionId,
     wallet.$id
   );
-  console.log("🗑️ Wallet deleted:", wallet.name);
   return wallet.$id;
 }
 
@@ -735,18 +943,14 @@ async function getRecentTransactions(userId, limit = 5) {
   }
 }
 
-// ── FREE TIER: Simple top-5 category breakdown ────────────────────────────────
 async function getSimpleAnalytics(userId) {
   try {
-    const t = await database.listDocuments(
-      CONFIG.dbId,
-      CONFIG.transactionCollectionId,
-      [Query.equal("uid", userId), Query.equal("type", "expense")]
-    );
-    if (t.documents.length === 0) return null;
+    const allTransactions = await getAllUserTransactions(userId);
+    const expenses = allTransactions.filter((tx) => tx.type === "expense");
+    if (expenses.length === 0) return null;
     const byCategory = {};
     let total = 0;
-    t.documents.forEach((tx) => {
+    expenses.forEach((tx) => {
       const cat = tx.category || "others";
       byCategory[cat] = (byCategory[cat] || 0) + tx.amount;
       total += tx.amount;
@@ -761,20 +965,13 @@ async function getSimpleAnalytics(userId) {
           total > 0 ? parseFloat(((amount / total) * 100).toFixed(1)) : 0
       }));
   } catch (err) {
-    console.error("Error in getSimpleAnalytics:", err);
     return null;
   }
 }
 
-// ── PRO TIER: Full month-over-month analytics ─────────────────────────────────
 async function getSpendingAnalytics(userId) {
   try {
-    const t = await database.listDocuments(
-      CONFIG.dbId,
-      CONFIG.transactionCollectionId,
-      [Query.equal("uid", userId)]
-    );
-    const allTx = t.documents;
+    const allTx = await getAllUserTransactions(userId);
     const now = new Date();
     const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
     const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
@@ -786,7 +983,6 @@ async function getSpendingAnalytics(userId) {
       59,
       59
     );
-
     const thisMonthTx = allTx.filter(
       (tx) => new Date(tx.date) >= thisMonthStart
     );
@@ -794,7 +990,6 @@ async function getSpendingAnalytics(userId) {
       const d = new Date(tx.date);
       return d >= lastMonthStart && d <= lastMonthEnd;
     });
-
     const sumByCategory = (txList, type = "expense") => {
       const map = {};
       txList
@@ -805,7 +1000,6 @@ async function getSpendingAnalytics(userId) {
         });
       return map;
     };
-
     const thisMonthExpenses = sumByCategory(thisMonthTx, "expense");
     const lastMonthExpenses = sumByCategory(lastMonthTx, "expense");
     const thisMonthIncome = thisMonthTx
@@ -815,12 +1009,10 @@ async function getSpendingAnalytics(userId) {
       (s, v) => s + v,
       0
     );
-
     const allCategories = new Set([
       ...Object.keys(thisMonthExpenses),
       ...Object.keys(lastMonthExpenses)
     ]);
-
     const categoryBreakdown = Array.from(allCategories)
       .map((cat) => {
         const current = thisMonthExpenses[cat] || 0;
@@ -842,10 +1034,8 @@ async function getSpendingAnalytics(userId) {
       })
       .filter((c) => c.amount > 0 || c.previousAmount > 0)
       .sort((a, b) => b.amount - a.amount);
-
     const eightWeeksAgo = new Date();
     eightWeeksAgo.setDate(eightWeeksAgo.getDate() - 56);
-
     const weeklyMap = {};
     allTx
       .filter(
@@ -861,12 +1051,10 @@ async function getSpendingAnalytics(userId) {
         });
         weeklyMap[key] = (weeklyMap[key] || 0) + tx.amount;
       });
-
     const weeklyTrend = Object.entries(weeklyMap)
       .sort(([a], [b]) => new Date(a) - new Date(b))
       .slice(-8)
       .map(([week, amount]) => ({ week, amount }));
-
     return {
       categoryBreakdown,
       thisMonthTotal,
@@ -879,24 +1067,18 @@ async function getSpendingAnalytics(userId) {
       hasData: allTx.length > 0
     };
   } catch (err) {
-    console.error("Error in getSpendingAnalytics:", err);
     return null;
   }
 }
 
-// ── PRO TIER: Anomaly detection ───────────────────────────────────────────────
 async function detectSpendingAnomalies(userId) {
   try {
-    const t = await database.listDocuments(
-      CONFIG.dbId,
-      CONFIG.transactionCollectionId,
-      [Query.equal("uid", userId), Query.equal("type", "expense")]
-    );
+    const allTransactions = await getAllUserTransactions(userId);
+    const expenses = allTransactions.filter((tx) => tx.type === "expense");
     const now = new Date();
     const thisMonthKey = `${now.getFullYear()}-${now.getMonth()}`;
     const monthlyByCategory = {};
-
-    t.documents.forEach((tx) => {
+    expenses.forEach((tx) => {
       const d = new Date(tx.date);
       const monthKey = `${d.getFullYear()}-${d.getMonth()}`;
       const cat = tx.category || "others";
@@ -905,29 +1087,23 @@ async function detectSpendingAnomalies(userId) {
         monthlyByCategory[cat][monthKey] = 0;
       monthlyByCategory[cat][monthKey] += tx.amount;
     });
-
     const anomalies = [];
     for (const [category, monthData] of Object.entries(monthlyByCategory)) {
       const currentAmount = monthData[thisMonthKey] || 0;
       if (currentAmount === 0) continue;
-
       const historicalAmounts = Object.entries(monthData)
         .filter(([key]) => key !== thisMonthKey)
         .map(([, amount]) => amount);
-
       if (historicalAmounts.length < 2) continue;
-
       const avg =
         historicalAmounts.reduce((s, v) => s + v, 0) / historicalAmounts.length;
       const stdDev = Math.sqrt(
         historicalAmounts.reduce((s, v) => s + Math.pow(v - avg, 2), 0) /
           historicalAmounts.length
       );
-
       const zScore = stdDev > 0 ? (currentAmount - avg) / stdDev : 0;
       const percentAbove = avg > 0 ? ((currentAmount - avg) / avg) * 100 : 0;
-
-      if (zScore > 1.5 && percentAbove > 40) {
+      if (zScore > 1.5 && percentAbove > 40)
         anomalies.push({
           category,
           currentAmount,
@@ -935,28 +1111,19 @@ async function detectSpendingAnomalies(userId) {
           percentAbove: parseFloat(percentAbove.toFixed(1)),
           severity: zScore > 2.5 ? "high" : "medium"
         });
-      }
     }
     return anomalies.sort((a, b) => b.percentAbove - a.percentAbove);
   } catch (err) {
-    console.error("Error detecting anomalies:", err);
     return [];
   }
 }
 
-// ── PRO TIER: Smart insights via GPT-4 ───────────────────────────────────────
 async function getSmartInsights(userId, analyticsData, anomalies) {
   try {
-    const t = await database.listDocuments(
-      CONFIG.dbId,
-      CONFIG.transactionCollectionId,
-      [Query.equal("uid", userId)]
-    );
-
+    const allTransactions = await getAllUserTransactions(userId);
     const weekdayExpense = { weekday: 0, weekend: 0 };
     const categoryByDayType = {};
-
-    t.documents
+    allTransactions
       .filter((tx) => tx.type === "expense")
       .forEach((tx) => {
         const day = new Date(tx.date).getDay();
@@ -968,91 +1135,40 @@ async function getSmartInsights(userId, analyticsData, anomalies) {
           categoryByDayType[cat] = { weekday: 0, weekend: 0 };
         categoryByDayType[cat][key] += tx.amount;
       });
-
     const weekendHeavyCategory = Object.entries(categoryByDayType)
       .filter(([, v]) => v.weekend > 0 && v.weekday > 0)
       .map(([cat, v]) => ({ cat, ratio: v.weekend / (v.weekday + v.weekend) }))
       .sort((a, b) => b.ratio - a.ratio)[0];
-
     const biggestIncrease = analyticsData.categoryBreakdown
       .filter((c) => c.change > 0 && c.previousAmount > 0)
       .sort((a, b) => b.change - a.change)[0];
-
     const biggestDecrease = analyticsData.categoryBreakdown
       .filter((c) => c.change < 0 && c.previousAmount > 0)
       .sort((a, b) => a.change - b.change)[0];
-
-    const insightContext = `
-User spending data for smart financial insights:
-
-This month total expenses: ${formatEUR(analyticsData.thisMonthTotal)}
-Last month total expenses: ${formatEUR(analyticsData.lastMonthTotal)}
-This month income: ${formatEUR(analyticsData.thisMonthIncome)}
-Savings rate: ${
-      analyticsData.thisMonthIncome > 0
-        ? (
-            (1 - analyticsData.thisMonthTotal / analyticsData.thisMonthIncome) *
-            100
-          ).toFixed(1)
-        : "N/A"
-    }%
-
-Top categories this month:
-${analyticsData.categoryBreakdown
-  .slice(0, 5)
-  .map(
-    (c) =>
-      `- ${c.category}: ${formatEUR(c.amount)} (${c.percentage.toFixed(1)}% of spending, ${c.change > 0 ? "+" : ""}${c.change}% vs last month)`
-  )
-  .join("\n")}
-
-Weekend vs weekday spending:
-- Weekdays total: ${formatEUR(weekdayExpense.weekday)}
-- Weekends total: ${formatEUR(weekdayExpense.weekend)}
-${weekendHeavyCategory ? `- "${weekendHeavyCategory.cat}" is ${(weekendHeavyCategory.ratio * 100).toFixed(0)}% weekend-skewed` : ""}
-
-Month-over-month movers:
-${biggestIncrease ? `- Biggest increase: ${biggestIncrease.category} +${biggestIncrease.change}%` : ""}
-${biggestDecrease ? `- Biggest decrease: ${biggestDecrease.category} ${biggestDecrease.change}%` : ""}
-
-Anomalies detected: ${
-      anomalies.length > 0
-        ? anomalies
-            .map(
-              (a) =>
-                `${a.category} is ${a.percentAbove}% above your usual spending`
-            )
-            .join(", ")
-        : "none"
-    }
-`;
-
+    const insightContext = `This month: ${formatEUR(analyticsData.thisMonthTotal)}, Last: ${formatEUR(analyticsData.lastMonthTotal)}, Income: ${formatEUR(analyticsData.thisMonthIncome)}\nTop: ${analyticsData.categoryBreakdown
+      .slice(0, 5)
+      .map(
+        (c) =>
+          `${c.category} ${formatEUR(c.amount)} (${c.change > 0 ? "+" : ""}${c.change}%)`
+      )
+      .join(
+        ", "
+      )}\nWeekdays: ${formatEUR(weekdayExpense.weekday)}, Weekends: ${formatEUR(weekdayExpense.weekend)}\n${weekendHeavyCategory ? `${weekendHeavyCategory.cat} is ${(weekendHeavyCategory.ratio * 100).toFixed(0)}% weekend` : ""}\n${biggestIncrease ? `Biggest increase: ${biggestIncrease.category} +${biggestIncrease.change}%` : ""}\n${biggestDecrease ? `Biggest decrease: ${biggestDecrease.category} ${biggestDecrease.change}%` : ""}\nAnomalies: ${anomalies.length > 0 ? anomalies.map((a) => `${a.category} ${a.percentAbove}% above usual`).join(", ") : "none"}`;
     const response = await openai.chat.completions.create({
       model: "gpt-4-turbo",
       messages: [
         {
           role: "system",
-          content: `You are a sharp financial analyst. Generate EXACTLY 3 concise, specific insights about this user's spending.
-Rules:
-- Each insight must be 1 sentence, max 20 words
-- Be specific with numbers and categories
-- Tone: direct, not preachy
-- Always respond in English only
-- Use EUR (€) amounts
-- Format as JSON array: [{"type":"trend|insight|anomaly","emoji":"<emoji>","text":"<insight>"}]
-- Output ONLY valid JSON, no markdown`
+          content: `You are a sharp financial analyst. Generate EXACTLY 3 concise insights. 1 sentence each, max 20 words, specific numbers, direct tone, English only, EUR amounts. Format: [{"type":"trend|insight|anomaly","emoji":"<emoji>","text":"<insight>"}] Output ONLY valid JSON.`
         },
         { role: "user", content: insightContext }
       ],
       temperature: 0.3,
       max_tokens: 200
     });
-
     const raw = response.choices[0]?.message?.content?.trim();
-    const clean = raw.replace(/```json|```/g, "").trim();
-    return JSON.parse(clean);
+    return JSON.parse(raw.replace(/```json|```/g, "").trim());
   } catch (err) {
-    console.warn("Smart insights failed:", err.message);
     return [];
   }
 }
@@ -1074,7 +1190,6 @@ async function processCommand(
       return sendToUser(ws, { type: "response", text: response });
     }
 
-    // ── CREATE WALLET ─────────────────────────────────────────────────────────
     if (command.action === "create_wallet") {
       try {
         const wallet = await createWallet(userId, command.name);
@@ -1082,29 +1197,24 @@ async function processCommand(
         sendToUser(ws, { type: "wallet_created", wallet });
         return sendToUser(ws, {
           type: "response",
-          text: `Perfect! I've created your "${wallet.name}" wallet. You're all set to start tracking transactions there.`
+          text: `Perfect! I've created your "${wallet.name}" wallet.`
         });
       } catch (err) {
         return sendToUser(ws, { type: "response", text: err.message });
       }
     }
 
-    // ── DELETE WALLET ─────────────────────────────────────────────────────────
     if (command.action === "delete_wallet") {
       const userWallets = await getUserWallets(userId);
-
-      if (userWallets.length === 0) {
+      if (userWallets.length === 0)
         return sendToUser(ws, {
           type: "response",
           text: "You don't have any wallets to delete."
         });
-      }
-
       const nameProvided = (command.name || "").trim().toLowerCase();
       const matchedWallet = nameProvided
         ? userWallets.find((w) => w.name.toLowerCase().trim() === nameProvided)
         : null;
-
       if (!matchedWallet) {
         if (userWallets.length === 1) {
           command.name = userWallets[0].name;
@@ -1124,7 +1234,6 @@ async function processCommand(
       } else {
         command.name = matchedWallet.name;
       }
-
       const deletedId = await deleteWallet(userId, command.name);
       if (deletedId) {
         await rateLimiter.incrementAIUsage(userId);
@@ -1136,11 +1245,83 @@ async function processCommand(
       }
       return sendToUser(ws, {
         type: "response",
-        text: "I couldn't find that wallet. Did you mean a different one?"
+        text: "I couldn't find that wallet."
       });
     }
 
-    // ── SINGLE TRANSACTION ────────────────────────────────────────────────────
+    if (command.action === "set_budget") {
+      if (!Number.isFinite(command.amount) || command.amount <= 0)
+        return sendToUser(ws, {
+          type: "response",
+          text: "Please provide a valid positive amount for the budget."
+        });
+      const category = command.category || null;
+      await setBudget(userId, command.amount, category);
+      await rateLimiter.incrementAIUsage(userId);
+      const label = category ? `${category} monthly` : "overall monthly";
+      return sendToUser(ws, {
+        type: "response",
+        text: `✅ Budget set! I'll warn you when your ${label} spending reaches 80% of €${command.amount.toFixed(2)}, and alert you if you exceed it.`
+      });
+    }
+
+    if (command.action === "get_budgets") {
+      const budgets = await getUserBudgets(userId);
+      await rateLimiter.incrementAIUsage(userId);
+      if (budgets.length === 0) {
+        return sendToUser(ws, {
+          type: "response",
+          text: 'You haven\'t set any budgets yet.\n\nTry saying:\n• "Set a monthly dining budget of €200"\n• "Set an overall monthly limit of €1000"'
+        });
+      }
+      const spending = await getMonthlySpending(userId);
+      const lines = ["📋 Your Monthly Budgets\n"];
+      const budgetVisualization = budgets.map((b) => {
+        const isOverall = b.category === null;
+        const spent = isOverall
+          ? spending.total
+          : spending.byCategory[b.category] || 0;
+        const pct = Math.round((spent / b.amount) * 100);
+        const indicator = pct >= 100 ? "🔴" : pct >= 80 ? "🟡" : "🟢";
+        const label = isOverall
+          ? "Overall"
+          : b.category.charAt(0).toUpperCase() + b.category.slice(1);
+        lines.push(
+          `${indicator} ${label.padEnd(16)} €${spent.toFixed(2)} / €${b.amount.toFixed(2)} (${pct}%)`
+        );
+        return {
+          id: b.$id,
+          category: b.category,
+          label: isOverall ? "Overall" : b.category,
+          limit: b.amount,
+          spent,
+          pct: Math.min(pct, 100),
+          remaining: Math.max(b.amount - spent, 0)
+        };
+      });
+      return sendToUser(ws, {
+        type: "response",
+        text: lines.join("\n"),
+        visualization: { type: "budget_list", budgets: budgetVisualization }
+      });
+    }
+
+    if (command.action === "delete_budget") {
+      const category = command.category || null;
+      const deleted = await deleteBudget(userId, category);
+      await rateLimiter.incrementAIUsage(userId);
+      const label = category ? `${category} monthly` : "overall monthly";
+      if (deleted)
+        return sendToUser(ws, {
+          type: "response",
+          text: `Done! Your ${label} budget has been removed.`
+        });
+      return sendToUser(ws, {
+        type: "response",
+        text: `I couldn't find a ${label} budget to delete.`
+      });
+    }
+
     if (command.action === "create_transaction") {
       const tx = command.transaction;
       if (!Number.isFinite(tx.amount) || tx.amount <= 0)
@@ -1148,9 +1329,7 @@ async function processCommand(
           type: "response",
           text: `Invalid amount: "${tx.amount}". Please provide a valid positive number.`
         });
-
       const userWallets = await getUserWallets(userId);
-
       if (tx._walletResolved) {
         const match = userWallets.find(
           (w) =>
@@ -1180,7 +1359,6 @@ async function processCommand(
         }
         tx.walletId = resolved.walletId;
       }
-
       const transaction = await createTransaction(userId, tx);
       const updatedWallet = await updateWalletTotals(userId, tx.walletId, tx);
       await rateLimiter.incrementAIUsage(userId);
@@ -1188,26 +1366,40 @@ async function processCommand(
       sendToUser(ws, { type: "wallet_updated", wallet: updatedWallet });
       const msg =
         tx.type === "expense"
-          ? `Recorded a ${tx.category} expense of ${CONFIG.currency}${tx.amount.toFixed(2)}. Your ${updatedWallet.name} wallet balance is now ${CONFIG.currency}${updatedWallet.amount.toFixed(2)}.`
-          : `Great! Logged ${CONFIG.currency}${tx.amount.toFixed(2)} income from ${tx.category}. Your ${updatedWallet.name} wallet is now at ${CONFIG.currency}${updatedWallet.amount.toFixed(2)}.`;
-      return sendToUser(ws, { type: "response", text: msg });
+          ? `Recorded a ${tx.category} expense of ${CONFIG.currency}${tx.amount.toFixed(2)}. Your ${updatedWallet.name} wallet is now ${CONFIG.currency}${updatedWallet.amount.toFixed(2)}.`
+          : `Great! Logged ${CONFIG.currency}${tx.amount.toFixed(2)} income. Your ${updatedWallet.name} wallet is now ${CONFIG.currency}${updatedWallet.amount.toFixed(2)}.`;
+      sendToUser(ws, { type: "response", text: msg });
+      // Fire budget check detached — use userSockets map to get latest socket (original may be dead)
+      if (tx.type === "expense") {
+        checkBudgetAlerts(userId)
+          .then((alerts) => {
+            if (alerts.length > 0) {
+              const latestWs = userSockets.get(userId);
+              if (latestWs)
+                sendToUser(latestWs, {
+                  type: "budget_alert",
+                  alerts,
+                  text: formatBudgetAlertText(alerts)
+                });
+              sendBudgetAlertPush(userId, alerts);
+            }
+          })
+          .catch((err) => console.error("Budget check error:", err));
+      }
+      return;
     }
 
-    // ── MULTIPLE TRANSACTIONS ─────────────────────────────────────────────────
     if (command.action === "create_transactions") {
-      for (const txData of command.transactions) {
+      for (const txData of command.transactions)
         if (!Number.isFinite(txData.amount) || txData.amount <= 0)
           return sendToUser(ws, {
             type: "response",
-            text: `Invalid amount (${txData.amount}). Please try again with valid amounts.`
+            text: `Invalid amount (${txData.amount}). Please try again.`
           });
-      }
-
       const userWallets = await getUserWallets(userId);
       const alreadyResolved = command.transactions.every(
         (tx) => tx._walletResolved === true
       );
-
       if (!alreadyResolved) {
         const anyNeedsSelection = command.transactions.some(
           (tx) =>
@@ -1231,10 +1423,8 @@ async function processCommand(
           });
         }
       }
-
       const transactionSummaries = [];
       const createdTransactions = [];
-
       for (const txData of command.transactions) {
         try {
           let walletId;
@@ -1270,13 +1460,10 @@ async function processCommand(
             `${txData.type === "income" ? "+" : "-"}${CONFIG.currency}${txData.amount.toFixed(2)} (${txData.category})`
           );
         } catch (err) {
-          console.error("Error creating individual transaction:", err);
-          transactionSummaries.push(
-            `❌ Failed: ${txData.category} transaction`
-          );
+          console.error("Error creating transaction:", err);
+          transactionSummaries.push(`❌ Failed: ${txData.category}`);
         }
       }
-
       const walletDeltas = new Map();
       for (const { transactionInfo } of createdTransactions) {
         if (!walletDeltas.has(transactionInfo.walletId))
@@ -1286,7 +1473,6 @@ async function processCommand(
           delta.income += transactionInfo.amount;
         else delta.expense += transactionInfo.amount;
       }
-
       await Promise.all(
         Array.from(walletDeltas.entries()).map(async ([walletId, delta]) => {
           const walletDoc = await database.getDocument(
@@ -1305,23 +1491,39 @@ async function processCommand(
               totalExpense: walletDoc.totalExpense + delta.expense
             }
           );
-          console.log(`💰 Wallet batch-updated: ${updatedWallet.name}`);
           sendToUser(ws, { type: "wallet_updated", wallet: updatedWallet });
         })
       );
-
       await rateLimiter.incrementAIUsage(userId);
-      return sendToUser(ws, {
+      sendToUser(ws, {
         type: "response",
         text: `Perfect! I've recorded ${createdTransactions.length} transaction${createdTransactions.length !== 1 ? "s" : ""}:\n\n${transactionSummaries.join("\n")}`
       });
+      // Fire budget check detached — use userSockets map to get latest socket (original may be dead)
+      const hasExpenses = createdTransactions.some(
+        (c) => c.transactionInfo.type === "expense"
+      );
+      if (hasExpenses) {
+        checkBudgetAlerts(userId)
+          .then((alerts) => {
+            if (alerts.length > 0) {
+              const latestWs = userSockets.get(userId);
+              if (latestWs)
+                sendToUser(latestWs, {
+                  type: "budget_alert",
+                  alerts,
+                  text: formatBudgetAlertText(alerts)
+                });
+              sendBudgetAlertPush(userId, alerts);
+            }
+          })
+          .catch((err) => console.error("Budget check error:", err));
+      }
+      return;
     }
 
-    // ── DELETE TRANSACTION ────────────────────────────────────────────────────
     if (command.action === "delete_transaction") {
       const userWallets = await getUserWallets(userId);
-
-      // User already confirmed from a selection prompt
       if (command._transactionResolved) {
         const txnToDelete = command._resolvedTransaction;
         const deleted = await deleteTransaction(userId, txnToDelete.$id);
@@ -1348,7 +1550,6 @@ async function processCommand(
           text: "Something went wrong. Please try again."
         });
       }
-
       const candidates = await findTransactionCandidates(
         userId,
         command.amount,
@@ -1357,18 +1558,14 @@ async function processCommand(
         command.walletId || null,
         userWallets
       );
-
-      if (candidates.length === 0) {
+      if (candidates.length === 0)
         return sendToUser(ws, {
           type: "response",
-          text: "I couldn't find a transaction matching that description. Can you be more specific?"
+          text: "I couldn't find a matching transaction."
         });
-      }
-
       const top = candidates[0];
       const second = candidates[1];
       const isClear = !second || top.score - second.score >= 100;
-
       if (isClear) {
         const txnToDelete = top.txn;
         const deleted = await deleteTransaction(userId, txnToDelete.$id);
@@ -1392,14 +1589,11 @@ async function processCommand(
         }
         return sendToUser(ws, {
           type: "response",
-          text: "Something went wrong. Please try again."
+          text: "Something went wrong."
         });
       }
-
-      // Ambiguous — ask user to pick
       ws._pending = { command, userText, summary };
       ws._pendingTransactions = candidates.slice(0, 4).map((c) => c.txn);
-
       return sendToUser(ws, {
         type: "transaction_selection",
         text: "I found a few matching transactions. Which one would you like to delete?",
@@ -1407,9 +1601,9 @@ async function processCommand(
       });
     }
 
-    // ── SUMMARY ───────────────────────────────────────────────────────────────
     if (command.action === "summary") {
       await rateLimiter.incrementAIUsage(userId);
+      summary = await getUserFinancialSummary(userId);
       const dateObjects = {},
         last7Days = {};
       for (let i = 6; i >= 0; i--) {
@@ -1459,22 +1653,18 @@ async function processCommand(
       });
     }
 
-    // ── RECENT ────────────────────────────────────────────────────────────────
     if (command.action === "recent") {
       const recent = await getRecentTransactions(userId, command.limit || 5);
       await rateLimiter.incrementAIUsage(userId);
-
       if (recent.length === 0)
         return sendToUser(ws, {
           type: "response",
           text: "No transactions recorded yet. Start by adding one!"
         });
-
       const userWallets = await getUserWallets(userId);
       const walletMap = Object.fromEntries(
         userWallets.map((w) => [w.$id, w.name])
       );
-
       const enrichedTransactions = recent.map((t) => ({
         id: t.$id,
         date: t.date,
@@ -1485,7 +1675,6 @@ async function processCommand(
         walletName: walletMap[t.walletId] || "Wallet",
         formattedAmount: `${t.type === "income" ? "+" : "-"}€${t.amount.toFixed(2)}`
       }));
-
       return sendToUser(ws, {
         type: "response",
         text: `Here are your last ${recent.length} transactions.`,
@@ -1496,23 +1685,17 @@ async function processCommand(
       });
     }
 
-    // ── ANALYTICS ─────────────────────────────────────────────────────────────
     if (command.action === "analytics") {
       const userPlan = await rateLimiter.getUserPlan(userId);
       const isPro = userPlan === "pro";
-      console.log(`📊 Analytics — userId: ${userId}, plan: ${userPlan}`);
-
       if (!isPro) {
         const simple = await getSimpleAnalytics(userId);
         await rateLimiter.incrementAIUsage(userId);
-
-        if (!simple || simple.length === 0) {
+        if (!simple || simple.length === 0)
           return sendToUser(ws, {
             type: "response",
             text: "No expense data yet. Record some transactions first!"
           });
-        }
-
         const lines = [
           "📊 Top Spending Categories\n",
           ...simple.map(
@@ -1521,35 +1704,26 @@ async function processCommand(
           ),
           "\n✨ Upgrade to Pro for trends, anomaly detection, smart insights & charts."
         ];
-
         sendToUser(ws, {
           type: "upgrade_required",
           feature: "advanced_analytics",
           message: "Unlock full analytics with a Pro plan."
         });
-
         return sendToUser(ws, { type: "response", text: lines.join("\n") });
       }
-
       sendProgressUpdate(ws, "Crunching your spending data...");
-
       const [analytics, anomalies] = await Promise.all([
         getSpendingAnalytics(userId),
         detectSpendingAnomalies(userId)
       ]);
-
       await rateLimiter.incrementAIUsage(userId);
-
-      if (!analytics || !analytics.hasData) {
+      if (!analytics || !analytics.hasData)
         return sendToUser(ws, {
           type: "response",
-          text: "No expense data yet to analyze. Record some expenses first!"
+          text: "No expense data yet to analyze."
         });
-      }
-
       sendProgressUpdate(ws, "Generating smart insights...");
       const insights = await getSmartInsights(userId, analytics, anomalies);
-
       const lines = [];
       lines.push(
         `📊 Spending Analytics — ${new Date().toLocaleString("en-US", { month: "long", year: "numeric" })}`
@@ -1561,15 +1735,11 @@ async function processCommand(
       lines.push(
         `Last month:  ${CONFIG.currency}${analytics.lastMonthTotal.toFixed(2)}`
       );
-
       const monthDiff = analytics.thisMonthTotal - analytics.lastMonthTotal;
-      if (analytics.lastMonthTotal > 0) {
-        const pct = ((monthDiff / analytics.lastMonthTotal) * 100).toFixed(1);
+      if (analytics.lastMonthTotal > 0)
         lines.push(
-          `Change:      ${monthDiff >= 0 ? "+" : ""}${CONFIG.currency}${monthDiff.toFixed(2)} (${pct}%)`
+          `Change:      ${monthDiff >= 0 ? "+" : ""}${CONFIG.currency}${monthDiff.toFixed(2)} (${((monthDiff / analytics.lastMonthTotal) * 100).toFixed(1)}%)`
         );
-      }
-
       lines.push("");
       lines.push("── Category Breakdown ──");
       analytics.categoryBreakdown.slice(0, 6).forEach((c) => {
@@ -1578,33 +1748,28 @@ async function processCommand(
           `${arrow} ${c.category.padEnd(16)} ${CONFIG.currency}${c.amount.toFixed(2).padStart(8)}  (${c.percentage.toFixed(1)}%)  ${c.change > 0 ? "+" : ""}${c.change}% vs last month`
         );
       });
-
       if (anomalies.length > 0) {
         lines.push("");
-        lines.push("── ⚠️  Anomalies Detected ──");
-        anomalies.forEach((a) => {
+        lines.push("── ⚠️  Anomalies ──");
+        anomalies.forEach((a) =>
           lines.push(
-            `${a.severity === "high" ? "🔴" : "🟡"} ${a.category}: ${CONFIG.currency}${a.currentAmount.toFixed(2)} this month — ${a.percentAbove}% above your usual ${CONFIG.currency}${a.historicalAvg.toFixed(2)}`
-          );
-        });
+            `${a.severity === "high" ? "🔴" : "🟡"} ${a.category}: ${CONFIG.currency}${a.currentAmount.toFixed(2)} — ${a.percentAbove}% above usual`
+          )
+        );
       }
-
       if (insights.length > 0) {
         lines.push("");
         lines.push("── 💡 Smart Insights ──");
         insights.forEach((i) => lines.push(`${i.emoji} ${i.text}`));
       }
-
       const categoryChartData = analytics.categoryBreakdown
         .filter((c) => c.amount > 0)
         .slice(0, 6)
         .map((c) => ({ label: c.category, value: c.amount }));
-
       const weeklyChartData = analytics.weeklyTrend.map((w) => ({
         label: w.week,
         amount: w.amount
       }));
-
       return sendToUser(ws, {
         type: "response",
         text: lines.join("\n"),
@@ -1649,6 +1814,7 @@ wss.on("connection", (ws) => {
   console.log("🔗 Client connected");
   ws._pending = null;
   ws._pendingTransactions = null;
+  ws._userId = null;
 
   ws.on("message", async (msg) => {
     let data;
@@ -1657,17 +1823,33 @@ wss.on("connection", (ws) => {
     } catch {
       return sendToUser(ws, { type: "error", text: "Invalid JSON" });
     }
-
     const userId = data.userId;
     if (!userId)
       return sendToUser(ws, { type: "error", text: "Missing userId" });
 
-    console.log(
-      `📨 MSG: type=${data.type}, userId=${userId}, pending=${ws._pending !== null}`
-    );
+    if (ws._userId !== userId) {
+      ws._userId = userId;
+      userSockets.set(userId, ws);
+    }
+
+    console.log(`📨 MSG: type=${data.type}, userId=${userId}`);
 
     try {
-      // ── CHECK ALLOWANCE ───────────────────────────────────────────────────
+      if (data.type === "user_connected") {
+        userSockets.set(userId, ws);
+        return;
+      }
+
+      if (data.type === "register_push_token") {
+        if (data.pushToken) await savePushToken(userId, data.pushToken);
+        return;
+      }
+
+      if (data.type === "check_budget_after_transaction") {
+        await handleManualTransactionBudgetCheck(ws, userId);
+        return;
+      }
+
       if (data.type === "check_allowance") {
         const allowance = await rateLimiter.getRemainingAllowance(userId);
         return sendToUser(ws, {
@@ -1680,20 +1862,17 @@ wss.on("connection", (ws) => {
         });
       }
 
-      // ── TEXT MESSAGE ──────────────────────────────────────────────────────
       if (data.type === "text") {
         if (ws._pending) {
           const pending = ws._pending;
           const userWallets = await getUserWallets(userId);
-
-          // ── Handle pending transaction selection ──
           if (ws._pendingTransactions) {
             const pendingTxns = ws._pendingTransactions;
+            const userInput = data.text.toLowerCase().trim();
             const matchedTxn = resolveTransactionFromInput(
               data.text,
               pendingTxns
             );
-
             if (matchedTxn) {
               ws._pendingTransactions = null;
               ws._pending = null;
@@ -1708,33 +1887,27 @@ wss.on("connection", (ws) => {
                 data.text,
                 pending.summary
               );
+            } else if (isCancelIntent(userInput)) {
+              ws._pending = null;
+              ws._pendingTransactions = null;
+              return sendToUser(ws, {
+                type: "response",
+                text: "No problem, cancelled. What else can I help you with?"
+              });
             } else {
               return sendToUser(ws, {
                 type: "transaction_selection",
-                text: "I couldn't match that. Please reply with the number (1, 2, 3) or say the wallet/category name:",
+                text: "I couldn't match that. Reply with the number (1, 2, 3) or say the wallet/category name:",
                 transactions: formatTransactionSelectionList(pendingTxns)
               });
             }
           }
-
-          // ── Handle pending wallet selection ──
-          console.log(`🔍 User replied: "${data.text}"`);
-          console.log(
-            `🔍 Available wallets: ${userWallets.map((w) => `"${w.name}"`).join(", ")}`
-          );
-
           const matchedWallet = userWallets.find((w) =>
             data.text.toLowerCase().includes(w.name.toLowerCase().trim())
           );
-          console.log(`🔍 Matched: ${matchedWallet?.name ?? "NONE"}`);
-
           if (matchedWallet) {
             ws._pending = null;
             ws._pendingTransactions = null;
-            console.log(
-              `✅ Wallet selected: "${matchedWallet.name}" — resuming command`
-            );
-
             if (pending.command.action === "create_transaction") {
               pending.command.transaction.walletId = matchedWallet.name;
               pending.command.transaction._walletResolved = true;
@@ -1746,7 +1919,6 @@ wss.on("connection", (ws) => {
             } else if (pending.command.action === "delete_wallet") {
               pending.command.name = matchedWallet.name;
             }
-
             return await processCommand(
               ws,
               userId,
@@ -1767,22 +1939,18 @@ wss.on("connection", (ws) => {
             });
           }
         }
-
         const rateLimitCheck = await rateLimiter.canMakeAIRequest(userId);
         if (!rateLimitCheck.allowed)
           return sendToUser(ws, {
             type: "rate_limit_exceeded",
             remaining: rateLimitCheck.remaining,
             limit: rateLimitCheck.limit,
-            text: `You've used your daily AI requests. You have ${rateLimitCheck.remaining} remaining. Upgrade your plan for unlimited access!`
+            text: `You've used your daily AI requests. Upgrade your plan for unlimited access!`
           });
-
         sendProgressUpdate(ws, "Analyzing your request...");
         const summary = await getUserFinancialSummary(userId);
         const command = await parseCommandWithAI(data.text, userId, summary);
         await processCommand(ws, userId, command, data.text, summary);
-
-        // ── AUDIO MESSAGE ─────────────────────────────────────────────────────
       } else if (data.type === "audio") {
         const rateLimitCheck = await rateLimiter.canMakeAIRequest(userId);
         if (!rateLimitCheck.allowed) {
@@ -1794,7 +1962,6 @@ wss.on("connection", (ws) => {
             text: `You've used your daily AI requests. Upgrade your plan for unlimited access!`
           });
         }
-
         if (!pendingAudio.has(userId))
           pendingAudio.set(userId, {
             chunks: [],
@@ -1802,7 +1969,6 @@ wss.on("connection", (ws) => {
           });
         const audioPending = pendingAudio.get(userId);
         audioPending.chunks.push(Buffer.from(data.chunk, "base64"));
-
         if (data.isLast === true) {
           if (ws.readyState !== WebSocket.OPEN) {
             pendingAudio.delete(userId);
@@ -1815,10 +1981,8 @@ wss.on("connection", (ws) => {
               text: "No audio received."
             });
           }
-
           const audioData = audioPending;
           pendingAudio.delete(userId);
-
           try {
             sendProgressUpdate(ws, "Transcribing audio...");
             const text = await transcribeAudio(
@@ -1830,19 +1994,15 @@ wss.on("connection", (ws) => {
               type: "response",
               text: `🎤 You said: "${text}"`
             });
-
             if (ws._pending) {
               const pending = ws._pending;
               const userWallets = await getUserWallets(userId);
-
-              // ── Handle pending transaction selection via audio ──
               if (ws._pendingTransactions) {
                 const pendingTxns = ws._pendingTransactions;
                 const matchedTxn = resolveTransactionFromInput(
                   text,
                   pendingTxns
                 );
-
                 if (matchedTxn) {
                   ws._pendingTransactions = null;
                   ws._pending = null;
@@ -1858,24 +2018,26 @@ wss.on("connection", (ws) => {
                     pending.summary
                   );
                   return;
+                } else if (isCancelIntent(text)) {
+                  ws._pending = null;
+                  ws._pendingTransactions = null;
+                  sendToUser(ws, {
+                    type: "response",
+                    text: "No problem, cancelled."
+                  });
+                  return;
                 } else {
                   sendToUser(ws, {
                     type: "transaction_selection",
-                    text: "I couldn't match that. Please say the number or wallet/category name:",
+                    text: "I couldn't match that. Please say the number or wallet/category:",
                     transactions: formatTransactionSelectionList(pendingTxns)
                   });
                   return;
                 }
               }
-
-              // ── Handle pending wallet selection via audio ──
               const matchedWallet = userWallets.find((w) =>
                 text.toLowerCase().includes(w.name.toLowerCase().trim())
               );
-              console.log(
-                `🔍 Voice wallet reply: "${text}" → matched: ${matchedWallet?.name ?? "NONE"}`
-              );
-
               if (matchedWallet) {
                 ws._pending = null;
                 ws._pendingTransactions = null;
@@ -1912,7 +2074,6 @@ wss.on("connection", (ws) => {
                 return;
               }
             }
-
             sendProgressUpdate(ws, "Processing your request...");
             const summary = await getUserFinancialSummary(userId);
             const command = await parseCommandWithAI(text, userId, summary);
@@ -1935,6 +2096,9 @@ wss.on("connection", (ws) => {
     }
   });
 
-  ws.on("close", () => console.log("❌ Client disconnected"));
+  ws.on("close", () => {
+    console.log("❌ Client disconnected");
+    if (ws._userId) userSockets.delete(ws._userId);
+  });
   ws.on("error", (err) => console.error("WebSocket error:", err));
 });

@@ -3,9 +3,19 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useWalletStore } from "@/lib/walletStore";
 
 const WS_URL = "ws://172.20.10.5:3000";
-
 const RECONNECT_BASE_DELAY = 3000;
 const RECONNECT_MAX_DELAY = 30000;
+
+export interface BudgetAlert {
+  severity: "warning" | "exceeded";
+  label: string;
+  category: string | null;
+  spent: number;
+  limit: number;
+  overBy?: number;
+  remaining?: number;
+  pct: number;
+}
 
 export interface Wallet {
   $id: string;
@@ -37,6 +47,16 @@ export interface EnrichedTransaction {
   formattedAmount: string;
 }
 
+export interface BudgetItem {
+  id: string;
+  category: string | null;
+  label: string;
+  limit: number;
+  spent: number;
+  pct: number;
+  remaining: number;
+}
+
 export interface Visualization {
   type: string;
   chartType?: "bar" | "line";
@@ -49,9 +69,9 @@ export interface Visualization {
   charts?: any[];
   anomalies?: any[];
   insights?: any[];
+  budgets?: BudgetItem[];
 }
 
-// Shape of a transaction candidate sent by transaction_selection event
 export interface TransactionCandidate {
   id: string;
   amount: number;
@@ -74,9 +94,23 @@ interface WSMessage {
   awaitingWallet?: boolean;
   wallets?: Array<{ id: string; name: string; amount: number }>;
   transactions?: TransactionCandidate[];
+  alerts?: BudgetAlert[];
 }
 
 export function useAppSocket(userId: string | null) {
+  const [budgetAlerts, setBudgetAlerts] = useState<BudgetAlert[]>([]);
+  const budgetAlertTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const clearBudgetAlerts = useCallback(() => setBudgetAlerts([]), []);
+
+  const triggerBudgetAlerts = useCallback((alerts: BudgetAlert[]) => {
+    if (budgetAlertTimerRef.current) clearTimeout(budgetAlertTimerRef.current);
+    setBudgetAlerts([]);
+    budgetAlertTimerRef.current = setTimeout(() => {
+      setBudgetAlerts(alerts);
+    }, 50);
+  }, []);
+
   const [lastMessage, setLastMessage] = useState<string | null>(null);
   const [lastVisualization, setLastVisualization] =
     useState<Visualization | null>(null);
@@ -100,53 +134,63 @@ export function useAppSocket(userId: string | null) {
   const allowanceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const reconnectDelayRef = useRef(RECONNECT_BASE_DELAY);
   const isIntentionalCloseRef = useRef(false);
+  const userIdRef = useRef(userId);
+  useEffect(() => {
+    userIdRef.current = userId;
+  }, [userId]);
 
   const queryClient = useQueryClient();
-  const { setWallets, setTransactions, wallets, transactions } =
-    useWalletStore();
 
-  const scheduleAllowanceCheck = useCallback(
-    (ws: WebSocket, userId: string) => {
-      if (allowanceTimeoutRef.current)
-        clearTimeout(allowanceTimeoutRef.current);
-      allowanceTimeoutRef.current = setTimeout(() => {
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: "check_allowance", userId }));
-          console.log("📊 Checking remaining allowance...");
-        }
-      }, 500);
-    },
-    []
-  );
+  // ── Use refs for store data to avoid recreating callbacks ─────────────────
+  // This is the key fix — wallets/transactions in deps caused connectWebSocket
+  // to recreate on every update, triggering the reconnect loop
+  const { setWallets, setTransactions } = useWalletStore();
+  const walletsRef = useRef(useWalletStore.getState().wallets);
+  const transactionsRef = useRef(useWalletStore.getState().transactions);
 
-  const sendMessage = useCallback(
-    (data: any) => {
-      if (!userId) {
-        console.warn("no userId");
-        return;
+  useEffect(() => {
+    return useWalletStore.subscribe((state) => {
+      walletsRef.current = state.wallets;
+      transactionsRef.current = state.transactions;
+    });
+  }, []);
+
+  const scheduleAllowanceCheck = useCallback((ws: WebSocket, uid: string) => {
+    if (allowanceTimeoutRef.current) clearTimeout(allowanceTimeoutRef.current);
+    allowanceTimeoutRef.current = setTimeout(() => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "check_allowance", userId: uid }));
+        console.log("📊 Checking remaining allowance...");
       }
-      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-        console.warn(
-          "❌ sendMessage DROPPED — socket state:",
-          wsRef.current?.readyState
-        );
-        return;
-      }
-      const payload = { ...data, userId };
-      wsRef.current.send(JSON.stringify(payload));
-      console.log("📤 Sent:", data.type, "| socket:", wsRef.current.readyState);
-    },
-    [userId]
-  );
+    }, 2000);
+  }, []);
 
-  const checkRemainingAllowance = useCallback(() => {
-    if (!userId) return;
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-      console.warn("Cannot check allowance: WebSocket not ready");
+  const sendMessage = useCallback((data: any) => {
+    const uid = userIdRef.current;
+    if (!uid) {
+      console.warn("no userId");
       return;
     }
-    wsRef.current.send(JSON.stringify({ type: "check_allowance", userId }));
-  }, [userId]);
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      console.warn(
+        "❌ sendMessage DROPPED — socket state:",
+        wsRef.current?.readyState
+      );
+      return;
+    }
+    const payload = { ...data, userId: uid };
+    wsRef.current.send(JSON.stringify(payload));
+    console.log("📤 Sent:", data.type, "| socket:", wsRef.current.readyState);
+  }, []);
+
+  const checkRemainingAllowance = useCallback(() => {
+    const uid = userIdRef.current;
+    if (!uid) return;
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    wsRef.current.send(
+      JSON.stringify({ type: "check_allowance", userId: uid })
+    );
+  }, []);
 
   const triggerAnimation = useCallback(
     (name: string) => setAnimationTrigger(name),
@@ -161,85 +205,100 @@ export function useAppSocket(userId: string | null) {
     setLastVisualization(null);
   }, []);
 
+  // ── All handlers use refs — stable, never recreated ───────────────────────
   const handleWalletCreated = useCallback(
     (wallet: Wallet) => {
       console.log("💰 Wallet created:", wallet);
-      setWallets([...wallets, wallet]);
+      const current = walletsRef.current || [];
+      setWallets([...current, wallet]);
       queryClient.setQueryData(
-        ["wallets", userId],
+        ["wallets", userIdRef.current],
         (old: Wallet[] | undefined) => (old ? [...old, wallet] : [wallet])
       );
-      queryClient.invalidateQueries({ queryKey: ["wallets", userId] });
+      queryClient.invalidateQueries({
+        queryKey: ["wallets", userIdRef.current]
+      });
       setAnimationTrigger("wallet_created");
     },
-    [wallets, userId, setWallets, queryClient]
+    [setWallets, queryClient]
   );
 
   const handleWalletDeleted = useCallback(
     (walletId: string) => {
       console.log("🗑️ Wallet deleted:", walletId);
-      setWallets(wallets.filter((w) => w.$id !== walletId));
+      const current = walletsRef.current || [];
+      setWallets(current.filter((w) => w.$id !== walletId));
       queryClient.setQueryData(
-        ["wallets", userId],
+        ["wallets", userIdRef.current],
         (old: Wallet[] | undefined) =>
           old ? old.filter((w) => w.$id !== walletId) : []
       );
-      queryClient.invalidateQueries({ queryKey: ["wallets", userId] });
+      queryClient.invalidateQueries({
+        queryKey: ["wallets", userIdRef.current]
+      });
       setAnimationTrigger("wallet_deleted");
     },
-    [wallets, userId, setWallets, queryClient]
+    [setWallets, queryClient]
   );
 
   const handleWalletUpdated = useCallback(
     (wallet: Wallet, ws: WebSocket) => {
       console.log("💾 Wallet updated:", wallet);
-      setWallets(wallets.map((w) => (w.$id === wallet.$id ? wallet : w)));
+      const current = walletsRef.current || [];
+      setWallets(current.map((w) => (w.$id === wallet.$id ? wallet : w)));
       queryClient.setQueryData(
-        ["wallets", userId],
+        ["wallets", userIdRef.current],
         (old: Wallet[] | undefined) =>
           old ? old.map((w) => (w.$id === wallet.$id ? wallet : w)) : [wallet]
       );
-      queryClient.invalidateQueries({ queryKey: ["wallets", userId] });
-      scheduleAllowanceCheck(ws, userId!);
+      queryClient.invalidateQueries({
+        queryKey: ["wallets", userIdRef.current]
+      });
+      scheduleAllowanceCheck(ws, userIdRef.current!);
     },
-    [wallets, userId, setWallets, queryClient, scheduleAllowanceCheck]
+    [setWallets, queryClient, scheduleAllowanceCheck]
   );
 
   const handleTransactionCreated = useCallback(
     (transaction: Transaction, ws: WebSocket) => {
       console.log("📊 Transaction created:", transaction);
-      setTransactions([...(transactions || []), transaction]);
+      const current = transactionsRef.current || [];
+      setTransactions([...current, transaction]);
       queryClient.setQueryData(
-        ["transactions", userId],
+        ["transactions", userIdRef.current],
         (old: Transaction[] | undefined) =>
           old ? [...old, transaction] : [transaction]
       );
-      queryClient.invalidateQueries({ queryKey: ["wallets", userId] });
+      queryClient.invalidateQueries({
+        queryKey: ["wallets", userIdRef.current]
+      });
       setAnimationTrigger("transaction_created");
-      scheduleAllowanceCheck(ws, userId!);
+      scheduleAllowanceCheck(ws, userIdRef.current!);
     },
-    [transactions, userId, setTransactions, queryClient, scheduleAllowanceCheck]
+    [setTransactions, queryClient, scheduleAllowanceCheck]
   );
 
   const handleTransactionDeleted = useCallback(
     (transactionId: string) => {
       console.log("🗑️ Transaction deleted:", transactionId);
-      setTransactions(
-        (transactions || []).filter((t) => t.$id !== transactionId)
-      );
+      const current = transactionsRef.current || [];
+      setTransactions(current.filter((t) => t.$id !== transactionId));
       queryClient.setQueryData(
-        ["transactions", userId],
+        ["transactions", userIdRef.current],
         (old: Transaction[] | undefined) =>
           old ? old.filter((t) => t.$id !== transactionId) : []
       );
-      queryClient.invalidateQueries({ queryKey: ["transactions", userId] });
+      queryClient.invalidateQueries({
+        queryKey: ["transactions", userIdRef.current]
+      });
       setAnimationTrigger("transaction_deleted");
     },
-    [transactions, userId, setTransactions, queryClient]
+    [setTransactions, queryClient]
   );
 
   const connectWebSocket = useCallback(() => {
-    if (!userId) {
+    const uid = userIdRef.current;
+    if (!uid) {
       console.log("⏭️ Skipping WebSocket connect - no userId");
       return;
     }
@@ -258,8 +317,8 @@ export function useAppSocket(userId: string | null) {
       reconnectDelayRef.current = RECONNECT_BASE_DELAY;
       setIsConnected(true);
       setAwaitingWallet(false);
-      ws.send(JSON.stringify({ type: "user_connected", userId }));
-      scheduleAllowanceCheck(ws, userId);
+      ws.send(JSON.stringify({ type: "user_connected", userId: uid }));
+      scheduleAllowanceCheck(ws, uid);
     };
 
     ws.onmessage = (e) => {
@@ -273,6 +332,11 @@ export function useAppSocket(userId: string | null) {
             limit: data.allowance.limit,
             resetTime: data.allowance.resetTime
           });
+        }
+
+        if (data.type === "budget_alert") {
+          console.log("🚨 Budget alert received:", data.alerts?.length);
+          triggerBudgetAlerts(data.alerts ?? []);
         }
 
         if (data.type === "wallet_created" && data.wallet)
@@ -302,9 +366,8 @@ export function useAppSocket(userId: string | null) {
           setLastMessage(data.text);
           setLastVisualization(data.visualization ?? null);
           setAwaitingWallet(data.awaitingWallet === true);
-          // A real response means any pending pickers should close
           setTransactionSelection(null);
-          scheduleAllowanceCheck(ws, userId);
+          scheduleAllowanceCheck(ws, uid);
         }
 
         if (data.type === "wallet_selection") {
@@ -312,7 +375,6 @@ export function useAppSocket(userId: string | null) {
           setAwaitingWallet(true);
         }
 
-        // ── NEW: transaction selection prompt from server ──────────────────
         if (data.type === "transaction_selection") {
           console.log(
             "🔀 Transaction selection needed:",
@@ -329,12 +391,10 @@ export function useAppSocket(userId: string | null) {
     ws.onclose = () => {
       console.log("⚠️ WebSocket closed");
       setIsConnected(false);
-
       if (isIntentionalCloseRef.current) {
         console.log("🛑 Intentional close — not reconnecting");
         return;
       }
-
       const delay = Math.min(reconnectDelayRef.current, RECONNECT_MAX_DELAY);
       reconnectDelayRef.current = Math.min(delay * 2, RECONNECT_MAX_DELAY);
       console.log(`🔄 Reconnecting in ${delay / 1000}s...`);
@@ -346,8 +406,9 @@ export function useAppSocket(userId: string | null) {
       ws.close();
     };
   }, [
-    userId,
+    // ✅ Only stable refs/callbacks — no wallets/transactions state
     scheduleAllowanceCheck,
+    triggerBudgetAlerts,
     handleWalletCreated,
     handleWalletDeleted,
     handleWalletUpdated,
@@ -363,6 +424,8 @@ export function useAppSocket(userId: string | null) {
         clearTimeout(allowanceTimeoutRef.current);
       if (reconnectTimeoutRef.current)
         clearTimeout(reconnectTimeoutRef.current);
+      if (budgetAlertTimerRef.current)
+        clearTimeout(budgetAlertTimerRef.current);
       if (wsRef.current) wsRef.current.close();
     };
   }, [userId, connectWebSocket]);
@@ -384,6 +447,8 @@ export function useAppSocket(userId: string | null) {
     transactionSelection,
     setTransactionSelection,
     paywallVisible,
-    setPaywallVisible
+    setPaywallVisible,
+    budgetAlerts,
+    clearBudgetAlerts
   };
 }
